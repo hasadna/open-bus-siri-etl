@@ -1,0 +1,8 @@
+-r ../open-bus-siri-requester/requirements.txt
+-e ../open-bus-siri-requester
+
+-r ../open-bus-stride-db/requirements.txt
+-e ../open-bus-stride-db
+
+-r requirements.txt
+-e .

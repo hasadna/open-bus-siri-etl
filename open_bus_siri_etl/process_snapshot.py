@@ -1,4 +1,6 @@
+import time
 import datetime
+from collections import defaultdict
 
 import pytz
 import sqlalchemy
@@ -8,9 +10,8 @@ from open_bus_stride_db.model import (
     SiriSnapshot, SiriSnapshotEtlStatusEnum, VehicleLocation, Ride, RouteStop, Route, Stop
 )
 import open_bus_siri_requester.storage
-
-
-ADD_VEHICLE_LOCATION_BATCH_SIZE = 20
+from .graceful_killer import GracefulKiller
+from . import config
 
 
 def iterate_monitored_stop_visits(snapshot_data):
@@ -194,24 +195,55 @@ def process_snapshot(session, snapshot_id, force_reload=False, snapshot_data=Non
 
 
 @session_decorator
-def process_new_snapshots(session, limit=None):
+def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, now=None):
+    if limit:
+        limit = int(limit)
+    if not last_snapshots_timedelta:
+        last_snapshots_timedelta = dict(days=7)
+    if not now:
+        now = datetime.datetime.now(pytz.UTC)
     last_loaded_snapshot = session.query(SiriSnapshot)\
         .filter(SiriSnapshot.etl_status == SiriSnapshotEtlStatusEnum.loaded)\
         .order_by(sqlalchemy.desc(SiriSnapshot.snapshot_id))\
         .first()
     if last_loaded_snapshot:
-        print('last loaded snapshot_id: {}'.format(last_loaded_snapshot.snapshot_id))
+        if config.DEBUG:
+            print('last loaded snapshot_id: {}'.format(last_loaded_snapshot.snapshot_id))
         cur_datetime = datetime.datetime.strptime(last_loaded_snapshot.snapshot_id + 'z+0000', '%Y/%m/%d/%H/%Mz%z') + datetime.timedelta(minutes=1)
     else:
-        print('no last loaded snapshot, getting snapshots from last 7 days')
-        cur_datetime = datetime.datetime.now(pytz.UTC) - datetime.timedelta(days=7)
-    while cur_datetime <= datetime.datetime.now(pytz.UTC):
+        if config.DEBUG:
+            print('no last loaded snapshot, getting snapshots from last {}'.format(last_snapshots_timedelta))
+        cur_datetime = now - datetime.timedelta(**last_snapshots_timedelta)
+    stats = defaultdict(int)
+    while cur_datetime <= now and (not limit or stats['processed'] <= limit):
+        stats['attempted'] += 1
         snapshot_id = cur_datetime.strftime('%Y/%m/%d/%H/%M')
-        print('attempting to process snapshot_id {}'.format(snapshot_id))
         try:
             snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
         except:
             snapshot_data = None
         if snapshot_data:
             process_snapshot(snapshot_id=snapshot_id, snapshot_data=snapshot_data)
+            stats['processed'] += 1
         cur_datetime = cur_datetime + datetime.timedelta(minutes=1)
+    if config.DEBUG:
+        print('processed {} snapshots out of {} attempted'.format(stats['processed'], stats['attempted']))
+    return stats
+
+
+def start_process_new_snapshots_daemon():
+    graceful_killer = GracefulKiller()
+    while not graceful_killer.kill_now:
+        start_time = datetime.datetime.now(pytz.UTC)
+        stats = process_new_snapshots()
+        if stats['processed'] > 0:
+            print('processed {} snapshots (attempted {})'.format(stats['processed'], stats['attempted']))
+        elif stats['attempted'] > 0:
+            print('attempted {} snapshots'.format(stats['attempted']))
+        if graceful_killer.kill_now:
+            break
+        elapsed_seconds = (datetime.datetime.now(pytz.UTC) - start_time).total_seconds()
+        if elapsed_seconds < 60:
+            time.sleep(60 - elapsed_seconds)
+        else:
+            time.sleep(5)

@@ -27,3 +27,8 @@ def process_snapshot(snapshot_id, force_reload):
 @click.option('--limit')
 def process_new_snapshots(limit):
     open_bus_siri_etl.process_snapshot.process_new_snapshots(limit)
+
+
+@main.command()
+def start_process_new_snapshots_daemon():
+    open_bus_siri_etl.process_snapshot.start_process_new_snapshots_daemon()

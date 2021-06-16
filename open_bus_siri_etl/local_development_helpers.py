@@ -21,6 +21,7 @@ def download_latest_snapshots():
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'wb') as f:
             try:
+                print("Downloading {} -> {}".format(url, filepath))
                 f.write(requests.get(url, auth=tuple(REMOTE_URL_HTTPAUTH.split(':'))).content)
             except:
                 print("Failed to download {}".format(filename))

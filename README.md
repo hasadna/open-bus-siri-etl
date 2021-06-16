@@ -17,41 +17,40 @@ Create virtualenv (Python 3.8)
 python3.8 -m venv venv
 ```
 
-Install open-bus-siri-requester dependencies and package, assuming it is cloned in a sibling directory:
+You should have a clone of the following repositories in sibling directories:
+
+* `../open-bus-siri-requester`: https://github.com/hasadna/open-bus-siri-requester
+* `../open-bus-stride-db`: https://github.com/hasadna/open-bus-stride-db
+
+Install dev requirements (this installs above repositories as well as this repository as editable for development):
 
 ```
-venv/bin/python -m pip install -r ../open-bus-siri-requester/requirements.txt &&\
-venv/bin/python -m pip install -e ../open-bus-siri-requester
+pip install -r requirements-dev.txt
 ```
 
-Install open-bus-stride-db dependencies and package, assuming it is cloned in a sibling directory:
+Create a `.env` file and set the following in the file:
 
-```
-venv/bin/python -m pip install -r ../open-bus-stride-db/requirements.txt &&\
-venv/bin/python -m pip install -e ../open-bus-stride-db
-```
-
-Install open-bus-siri-etl dependencies and package 
-
-```
-venv/bin/python -m pip install -r requirements.txt &&\
-venv/bin/python -m pip install -e .
-```
-
-Create a `.env`:
+Get the values for the remote url from another project member:
 
 ```
 export REMOTE_URL_HTTPAUTH=username:password
+```
+
+The sql alchemy url should be as follows (it's only used locally):
+
+```
 export SQLALCHEMY_URL=postgresql://postgres:123456@localhost
+```
+
+Enable debug for local development:
+
+```
+export DEBUG=yes
 ```
 
 ## Use
 
-Start a stride DB:
-
-```
-docker run --name stride-db -e POSTGRES_PASSWORD=123456 -p 5432:5432 -v `pwd`/.data/db:/var/lib/postgresql/data -d postgres:13
-```
+Go to open-bus-stride-db repo and follow the README to start a local DB and update to latest migration
 
 Activate the virtualenv and source the .env file
 
@@ -86,9 +85,10 @@ Install tests requirements
 pip install -r tests/requirements.txt
 ```
 
-Start a stride DB for testing:
+Start a stride DB for testing and update to latest migration:
 
 ```
+docker rm -f stride-db;
 sudo rm -rf .data/tests-db &&\
 docker run --rm --name stride-db -e POSTGRES_PASSWORD=123456 -p 5432:5432 -v `pwd`/.data/tests-db:/var/lib/postgresql/data -d postgres:13 &&\
 sleep 2 &&\
