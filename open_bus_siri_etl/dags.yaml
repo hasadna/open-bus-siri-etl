@@ -1,0 +1,16 @@
+- name: siri-etl-process-snapshot
+  description: |
+    Process a single snapshot and load it to DB.
+    {
+        "snapshot_id": "2021/07/05/12/50",
+        "force_reload": false
+    }
+  tasks:
+    - id: process-snapshot
+      config:
+        type: api
+        module: open_bus_siri_etl.process_snapshot
+        function: process_snapshot
+        kwargs:
+          snapshot_id: {}
+          force_reload: {default: false}
