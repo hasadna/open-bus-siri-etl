@@ -33,7 +33,7 @@ def get_or_create_siri_snapshot(session, snapshot_id, force_reload):
         session.add(siri_snapshot)
         session.commit()
     if siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.loading and not is_new_snapshot and not force_reload:
-        raise Exception("snapshot is already in loading status")
+        raise Exception("snapshot is already in loading status (snapshot_id={})".format(snapshot_id))
     if not is_new_snapshot:
         siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loading
         session.query(VehicleLocation).filter(VehicleLocation.siri_snapshot==siri_snapshot).delete()
