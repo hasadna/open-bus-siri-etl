@@ -10,6 +10,7 @@ import pytest
 import open_bus_siri_requester.config, open_bus_siri_requester.storage
 from open_bus_siri_etl.process_snapshot import process_snapshot, process_new_snapshots
 from open_bus_stride_db.model import SiriSnapshot, Route, Stop, RouteStop, Ride, SiriSnapshotEtlStatusEnum
+from open_bus_siri_etl.config import OPEN_BUS_SIRI_ETL_ROOTPATH
 
 from . import common
 
@@ -49,6 +50,13 @@ TEST_SNAPSHOT_DATA = {
                         },
                         {
                             "RecordedAtTime": "2019-05-05T16:00:51+03:00", "MonitoredVehicleJourney": {"LineRef": "5", "FramedVehicleJourneyRef": {"DataFrameRef": "2019-05-05", "DatedVehicleJourneyRef": "49957061"}, "OperatorRef": "25", "OriginAimedDepartureTime": "2019-05-05T15:35:00+03:00", "VehicleLocation": {"Longitude": "34.734901", "Latitude": "31.897741"}, "Bearing": "200", "Velocity": "50", "VehicleRef": "56269001", "MonitoredCall": {"StopPointRef": "32521", "Order": "30", "DistanceFromStop": "8779"}}
+                        },
+                        # invalid monitored_stop_visit - will fail to parse:
+                        {
+                            'RecordedAtTime': '2019-05-05T16:00:53+03:00', 'MonitoredVehicleJourney': {'LineRef': '26149', 'FramedVehicleJourneyRef': {'DataFrameRef': '2019-05-05', 'DatedVehicleJourneyRef': '58736023'}, 'OperatorRef': '2', 'OriginAimedDepartureTime': '2019-05-05T15:45:00+03:00', 'Bearing': '0', 'Velocity': '0', 'VehicleRef': '404', 'MonitoredCall': {'StopPointRef': '17016', 'Order': '23', 'DistanceFromStop': '0'}}
+                        },
+                        {
+                            'RecordedAtTime': '2019-05-05T16:00:53+03:00', 'MonitoredVehicleJourney': {'LineRef': '26149', 'FramedVehicleJourneyRef': {'DataFrameRef': '2019-05-05', 'DatedVehicleJourneyRef': '58736023'}, 'OperatorRef': '2', 'OriginAimedDepartureTime': '2019-05-05T15:45:00+03:00', 'Bearing': '0', 'Velocity': '0', 'VehicleRef': '404', 'MonitoredCall': {'StopPointRef': '17016', 'Order': '23', 'DistanceFromStop': '0'}}
                         }
                     ]
                 }
@@ -114,10 +122,15 @@ def assert_test_siri_snapshot(session, snapshot_id=TEST_SNAPSHOT_ID, first_vehic
     assert pytz.UTC.localize(siri_snapshot.etl_end_time) <= datetime.datetime.now(pytz.UTC) + datetime.timedelta(minutes=5)
     assert siri_snapshot.error == ''
     assert siri_snapshot.num_successful_parse_vehicle_locations == 3
-    assert siri_snapshot.num_failed_parse_vehicle_locations == 0
+    assert siri_snapshot.num_failed_parse_vehicle_locations == 2
     assert len(siri_snapshot.vehicle_locations) == 3
     vehicle_location = siri_snapshot.vehicle_locations[0]
     assert_first_vehicle_location(vehicle_location, first_vehicle_location_date, first_vehicle_location_time, with_assert_ids=first_vehicle_location_with_assert_ids)
+    with open(os.path.join(OPEN_BUS_SIRI_ETL_ROOTPATH, 'monitored_stop_visits_parse_failed', snapshot_id, 'jsonlines')) as f:
+        monitored_stop_visits_parse_failures = [json.loads(line.strip()) for line in f if line.strip()]
+    assert len(monitored_stop_visits_parse_failures) == 2
+    assert monitored_stop_visits_parse_failures[0]['MonitoredVehicleJourney']['LineRef'] == '26149'
+    assert monitored_stop_visits_parse_failures[1]['MonitoredVehicleJourney']['LineRef'] == '26149'
     return siri_snapshot, vehicle_location
 
 

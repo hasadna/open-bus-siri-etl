@@ -1,3 +1,5 @@
+import os
+import json
 import time
 import datetime
 from collections import defaultdict
@@ -121,7 +123,16 @@ def parse_timestr(timestr):
     return datetime.datetime.strptime(timestr.replace(':', ''), '%Y-%m-%dT%H%M%S%z').astimezone(pytz.UTC)
 
 
-def parse_monitored_stop_visit(session, monitored_stop_visit):
+def get_monitored_stop_visit_parse_errors_filename(snapshot_id):
+    return os.path.join(config.OPEN_BUS_SIRI_ETL_ROOTPATH, 'monitored_stop_visits_parse_failed', snapshot_id, 'jsonlines')
+
+
+def save_monitored_stop_visit_parse_error(monitored_stop_visit, snapshot_id):
+    with open(get_monitored_stop_visit_parse_errors_filename(snapshot_id), 'a') as f:
+        f.write(json.dumps(monitored_stop_visit)+"\n")
+
+
+def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id):
     try:
         recorded_at_time = parse_timestr(monitored_stop_visit['RecordedAtTime'])
         line_ref = int(monitored_stop_visit['MonitoredVehicleJourney']['LineRef'])
@@ -137,7 +148,9 @@ def parse_monitored_stop_visit(session, monitored_stop_visit):
         velocity = int(monitored_stop_visit['MonitoredVehicleJourney'].get('Velocity', -1))
         distance_from_journey_start = int(monitored_stop_visit['MonitoredVehicleJourney']['MonitoredCall'].get('DistanceFromStop', -1))
     except:
-        print("Failed to parse monitored stop visit: {}".format(monitored_stop_visit))
+        save_monitored_stop_visit_parse_error(monitored_stop_visit, snapshot_id)
+        if config.DEBUG:
+            print("Failed to parse monitored stop visit: {}".format(monitored_stop_visit))
         return None
     route = get_or_create_route(session, recorded_at_time, line_ref, operator_ref)
     ride = get_or_create_ride(session, journey_ref, route, scheduled_start_time, vehicle_ref)
@@ -157,15 +170,21 @@ def parse_monitored_stop_visit(session, monitored_stop_visit):
 
 @session_decorator
 def process_snapshot(session, snapshot_id, force_reload=False, snapshot_data=None):
+    print("Processing snapshot: {}".format(snapshot_id))
     if snapshot_data is None:
         snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
+    monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
+    if os.path.exists(monitored_stop_visit_parse_errors_filename):
+        os.unlink(monitored_stop_visit_parse_errors_filename)
+    else:
+        os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
     error, monitored_stop_visit, siri_snapshot, is_new_snapshot = None, None, None, None
     num_failed_parse_vehicle_locations, num_successful_parse_vehicle_locations = 0, 0
     try:
         for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
             if siri_snapshot is None:
                 siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
-            parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit)
+            parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id)
             if parsed_monitored_stop_visit:
                 num_successful_parse_vehicle_locations += 1
                 vehicle_location = VehicleLocation(
@@ -207,12 +226,10 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
         .order_by(sqlalchemy.desc(SiriSnapshot.snapshot_id))\
         .first()
     if last_loaded_snapshot:
-        if config.DEBUG:
-            print('last loaded snapshot_id: {}'.format(last_loaded_snapshot.snapshot_id))
+        print('last loaded snapshot_id: {}'.format(last_loaded_snapshot.snapshot_id))
         cur_datetime = datetime.datetime.strptime(last_loaded_snapshot.snapshot_id + 'z+0000', '%Y/%m/%d/%H/%Mz%z') + datetime.timedelta(minutes=1)
     else:
-        if config.DEBUG:
-            print('no last loaded snapshot, getting snapshots from last {}'.format(last_snapshots_timedelta))
+        print('no last loaded snapshot, getting snapshots from last {}'.format(last_snapshots_timedelta))
         cur_datetime = now - datetime.timedelta(**last_snapshots_timedelta)
     stats = defaultdict(int)
     while cur_datetime <= now and (not limit or stats['processed'] <= limit):

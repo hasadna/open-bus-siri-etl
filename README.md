@@ -17,6 +17,12 @@ Create virtualenv (Python 3.8)
 python3.8 -m venv venv
 ```
 
+Upgrade pip
+
+```
+venv/bin/pip install --upgrade pip
+```
+
 You should have a clone of the following repositories in sibling directories:
 
 * `../open-bus-siri-requester`: https://github.com/hasadna/open-bus-siri-requester
