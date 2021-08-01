@@ -2,8 +2,23 @@
 
 ETL processing of SIRI real-time snapshots
 
+## Required environment variables
 
-## Install
+* `REMOTE_URL_HTTPAUTH`: http auth to download siri snapshots (format: `username:password`)
+
+## Development using the Docker Compose environment
+
+This is the easiest option to start development, follow these instructions: https://github.com/hasadna/open-bus-pipelines/blob/main/README.md#siri-etl
+
+For local development, see the additional functionality section: `Develop siri-etl from a local clone`
+
+## Development using local Python interpreter
+
+It's much easier to use the Docker Compose environment, but the following can be
+refferd to for more details regarding the internal processes and for development
+using your local Python interpreter. 
+
+### Install
 
 Install Brotli for compression
 
@@ -54,7 +69,7 @@ Enable debug for local development:
 export DEBUG=yes
 ```
 
-## Use
+### Use
 
 Go to open-bus-stride-db repo and follow the README to start a local DB and update to latest migration
 
@@ -83,7 +98,7 @@ Process a snapshot
 open-bus-siri-etl process-snapshot SNAPSHOT_ID
 ```
 
-## Tests
+### Tests
 
 Install tests requirements
 
