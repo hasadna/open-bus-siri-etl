@@ -214,7 +214,7 @@ def process_snapshot(session, snapshot_id, force_reload=False, snapshot_data=Non
 
 
 @session_decorator
-def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, now=None):
+def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, now=None, graceful_killer=None):
     if limit:
         limit = int(limit)
     if not last_snapshots_timedelta:
@@ -233,6 +233,8 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
         cur_datetime = now - datetime.timedelta(**last_snapshots_timedelta)
     stats = defaultdict(int)
     while cur_datetime <= now and (not limit or stats['processed'] <= limit):
+        if graceful_killer and graceful_killer.kill_now:
+            break
         stats['attempted'] += 1
         snapshot_id = cur_datetime.strftime('%Y/%m/%d/%H/%M')
         try:
@@ -252,7 +254,7 @@ def start_process_new_snapshots_daemon():
     graceful_killer = GracefulKiller()
     while not graceful_killer.kill_now:
         start_time = datetime.datetime.now(pytz.UTC)
-        stats = process_new_snapshots()
+        stats = process_new_snapshots(graceful_killer=graceful_killer)
         if stats['processed'] > 0:
             print('processed {} snapshots (attempted {})'.format(stats['processed'], stats['attempted']))
         elif stats['attempted'] > 0:
