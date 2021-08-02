@@ -2,6 +2,7 @@ import click
 
 import open_bus_siri_etl.process_snapshot
 from open_bus_siri_etl import local_development_helpers
+from open_bus_stride_db.db import get_session
 
 
 @click.group(context_settings={'max_content_width': 200})
@@ -20,7 +21,8 @@ def download_latest_snapshots():
 @click.argument('SNAPSHOT_ID')
 @click.option('--force-reload', is_flag=True)
 def process_snapshot(snapshot_id, force_reload):
-    open_bus_siri_etl.process_snapshot.process_snapshot(snapshot_id, force_reload)
+    with get_session() as session:
+        open_bus_siri_etl.process_snapshot.process_snapshot(session, snapshot_id, force_reload)
 
 
 @main.command()

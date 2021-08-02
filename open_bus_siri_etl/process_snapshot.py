@@ -250,7 +250,6 @@ def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objec
     }
 
 
-@session_decorator
 def process_snapshot(session, snapshot_id, force_reload=False, snapshot_data=None, objects_maker=None):
     print("Processing snapshot: {}".format(snapshot_id))
     if objects_maker is None:
@@ -343,7 +342,7 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
         except:
             snapshot_data = None
         if snapshot_data:
-            process_snapshot(snapshot_id=snapshot_id, snapshot_data=snapshot_data, objects_maker=objects_maker)
+            process_snapshot(session, snapshot_id=snapshot_id, snapshot_data=snapshot_data, objects_maker=objects_maker)
             stats['processed'] += 1
         cur_datetime = cur_datetime + datetime.timedelta(minutes=1)
     if config.DEBUG:
