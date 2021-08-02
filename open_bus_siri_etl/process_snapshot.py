@@ -66,82 +66,6 @@ class ObjectsMaker:
         self.route_stops_cache = {}
         self.rides_cache = {}
 
-    def get_obj_class(self, objname):
-        return {
-            'stop': Stop,
-            'route': Route,
-            'ride': Ride,
-            'route_stop': RouteStop
-        }[objname]
-
-    # def get_obj_filter_args(self, objname, **kwargs):
-        # if objname == 'stop':
-        #     return (
-        #         Stop.min_date <= kwargs['recorded_at_time'].date(),
-        #         kwargs['recorded_at_time'].date() <= Stop.max_date,
-        #         Stop.code == kwargs['stop_point_ref'],
-        #         Stop.is_from_gtfs == False
-        #     )
-        # elif objname == 'route':
-        #     return (
-        #         Route.min_date <= kwargs['recorded_at_time'].date(),
-        #         kwargs['recorded_at_time'].date() <= Route.max_date,
-        #         Route.line_ref == kwargs['line_ref'],
-        #         Route.operator_ref == kwargs['operator_ref'],
-        #         Route.is_from_gtfs == False
-        #     )
-        # elif objname == 'route_stop':
-        #     return (
-        #         RouteStop.stop_id == kwargs['stop'].id,
-        #         RouteStop.route_id == kwargs['route'].id,
-        #         RouteStop.order == kwargs['order'],
-        #         RouteStop.is_from_gtfs == False
-        #     )
-        # elif objname == 'ride':
-        #     return (
-        #         Ride.route_id == kwargs['route'].id,
-        #         Ride.journey_ref == kwargs['journey_ref'],
-        #         Ride.scheduled_start_time == kwargs['scheduled_start_time'],
-        #         Ride.vehicle_ref == kwargs['vehicle_ref'],
-        #         Ride.is_from_gtfs == False
-        #     )
-        # else:
-        #     raise Exception('invalid objname: {}'.format(objname))
-
-    def get_new_object_kwargs(self, objname, **kwargs):
-        if objname == 'stop':
-            return dict(
-                min_date=kwargs['recorded_at_time'].date(),
-                max_date=kwargs['recorded_at_time'].date(),
-                code=kwargs['stop_point_ref'],
-                is_from_gtfs=False
-            )
-        elif objname == 'route':
-            return dict(
-                min_date=kwargs['recorded_at_time'].date(),
-                max_date=kwargs['recorded_at_time'].date(),
-                line_ref=kwargs['line_ref'],
-                operator_ref=kwargs['operator_ref'],
-                is_from_gtfs=False
-            )
-        elif objname == 'ride':
-            return dict(
-                route=kwargs['route'],
-                journey_ref=kwargs['journey_ref'],
-                scheduled_start_time=kwargs['scheduled_start_time'],
-                vehicle_ref=kwargs['vehicle_ref'],
-                is_from_gtfs=False
-            )
-        elif objname == 'route_stop':
-            return dict(
-                stop=kwargs['stop'],
-                route=kwargs['route'],
-                order=kwargs['order'],
-                is_from_gtfs=False
-            )
-        else:
-            raise Exception('invalid objname: {}'.format(objname))
-
     def get_existing_object(self, objname, session, **kwargs):
         if objname == 'route':
             recorded_at_time = kwargs['recorded_at_time']
@@ -192,14 +116,48 @@ class ObjectsMaker:
                 return self.rides_cache[scheduled_start_datestr].get('{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref']))
         else:
             raise Exception("invalid objname: {}".format(objname))
-        # else:
-        #     return session\
-        #         .query(self.get_obj_class(objname))\
-        #         .filter(*self.get_obj_filter_args(objname, **kwargs))\
-        #         .one_or_none()
 
     def create_new_object(self, objname, session, **kwargs):
-        new_object = self.get_obj_class(objname)(**self.get_new_object_kwargs(objname, **kwargs))
+        if objname == 'stop':
+            recorded_at_time = kwargs['recorded_at_time']
+            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
+            new_object = self.stops_cache.setdefault(recorded_at_datestr, {})[int(kwargs['stop_point_ref'])] = Stop(
+                min_date=kwargs['recorded_at_time'].date(),
+                max_date=kwargs['recorded_at_time'].date(),
+                code=kwargs['stop_point_ref'],
+                is_from_gtfs=False
+            )
+        elif objname == 'route':
+            recorded_at_time = kwargs['recorded_at_time']
+            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
+            new_object = self.routes_cache.setdefault(recorded_at_datestr, {}).setdefault(kwargs['operator_ref'], {})[kwargs['line_ref']] = Route(
+                min_date=kwargs['recorded_at_time'].date(),
+                max_date=kwargs['recorded_at_time'].date(),
+                line_ref=kwargs['line_ref'],
+                operator_ref=kwargs['operator_ref'],
+                is_from_gtfs=False
+            )
+        elif objname == 'ride':
+            scheduled_start_time = kwargs['scheduled_start_time']
+            scheduled_start_datestr = scheduled_start_time.strftime('%Y%m%d')
+            new_object = self.rides_cache.setdefault(scheduled_start_datestr, {})['{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref'])] = Ride(
+                route=kwargs['route'],
+                journey_ref=kwargs['journey_ref'],
+                scheduled_start_time=kwargs['scheduled_start_time'],
+                vehicle_ref=kwargs['vehicle_ref'],
+                is_from_gtfs=False
+            )
+        elif objname == 'route_stop':
+            recorded_at_time = kwargs['recorded_at_time']
+            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
+            new_object = self.route_stops_cache.setdefault(recorded_at_datestr, {})['{}-{}-{}'.format(kwargs['stop'].id, kwargs['route'].id, kwargs['order'])] = RouteStop(
+                stop=kwargs['stop'],
+                route=kwargs['route'],
+                order=kwargs['order'],
+                is_from_gtfs=False
+            )
+        else:
+            raise Exception('invalid objname: {}'.format(objname))
         session.add(new_object)
         return new_object
 
