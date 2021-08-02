@@ -14,6 +14,7 @@ from open_bus_stride_db.model import (
 import open_bus_siri_requester.storage
 from .graceful_killer import GracefulKiller
 from . import config
+from . import logs
 
 
 def iterate_monitored_stop_visits(snapshot_data):
@@ -43,14 +44,15 @@ def get_or_create_siri_snapshot(session, snapshot_id, force_reload):
     return siri_snapshot
 
 
-def get_or_create_route(session, recorded_at_time, line_ref, operator_ref):
-    route = session.query(Route).filter(
-        Route.min_date <= recorded_at_time.date(),
-        recorded_at_time.date() <= Route.max_date,
-        Route.line_ref == line_ref,
-        Route.operator_ref == operator_ref,
-        Route.is_from_gtfs == False
-    ).one_or_none()
+def get_or_create_route(session, recorded_at_time, line_ref, operator_ref, stats):
+    with logs.debug_time_stats('route_get', stats, log_if_more_then_seconds=1):
+        route = session.query(Route).filter(
+            Route.min_date <= recorded_at_time.date(),
+            recorded_at_time.date() <= Route.max_date,
+            Route.line_ref == line_ref,
+            Route.operator_ref == operator_ref,
+            Route.is_from_gtfs == False
+        ).one_or_none()
     if not route:
         route = Route(
             min_date=recorded_at_time.date(),
@@ -59,18 +61,20 @@ def get_or_create_route(session, recorded_at_time, line_ref, operator_ref):
             operator_ref=operator_ref,
             is_from_gtfs=False
         )
-        session.add(route)
+        with logs.debug_time_stats('route_add', stats, log_if_more_then_seconds=1):
+            session.add(route)
     return route
 
 
-def get_or_create_ride(session, journey_ref, route, scheduled_start_time, vehicle_ref):
-    ride = session.query(Ride).filter(
-        Ride.route_id == route.id,
-        Ride.journey_ref == journey_ref,
-        Ride.scheduled_start_time == scheduled_start_time,
-        Ride.vehicle_ref == vehicle_ref,
-        Ride.is_from_gtfs == False
-    ).one_or_none()
+def get_or_create_ride(session, journey_ref, route, scheduled_start_time, vehicle_ref, stats):
+    with logs.debug_time_stats('ride_get', stats, log_if_more_then_seconds=1):
+        ride = session.query(Ride).filter(
+            Ride.route_id == route.id,
+            Ride.journey_ref == journey_ref,
+            Ride.scheduled_start_time == scheduled_start_time,
+            Ride.vehicle_ref == vehicle_ref,
+            Ride.is_from_gtfs == False
+        ).one_or_none()
     if not ride:
         ride = Ride(
             route=route,
@@ -79,17 +83,19 @@ def get_or_create_ride(session, journey_ref, route, scheduled_start_time, vehicl
             vehicle_ref=vehicle_ref,
             is_from_gtfs=False
         )
-        session.add(ride)
+        with logs.debug_time_stats('ride_add', stats, log_if_more_then_seconds=1):
+            session.add(ride)
     return ride
 
 
-def get_or_create_route_stop(session, stop, route, order):
-    route_stop = session.query(RouteStop).filter(
-        RouteStop.stop_id == stop.id,
-        RouteStop.route_id == route.id,
-        RouteStop.order == order,
-        RouteStop.is_from_gtfs == False
-    ).one_or_none()
+def get_or_create_route_stop(session, stop, route, order, stats):
+    with logs.debug_time_stats('route_stop_get', stats, log_if_more_then_seconds=1):
+        route_stop = session.query(RouteStop).filter(
+            RouteStop.stop_id == stop.id,
+            RouteStop.route_id == route.id,
+            RouteStop.order == order,
+            RouteStop.is_from_gtfs == False
+        ).one_or_none()
     if not route_stop:
         route_stop = RouteStop(
             stop=stop,
@@ -97,17 +103,19 @@ def get_or_create_route_stop(session, stop, route, order):
             order=order,
             is_from_gtfs=False
         )
-        session.add(route_stop)
+        with logs.debug_time_stats('route_stop_add', stats, log_if_more_then_seconds=1):
+            session.add(route_stop)
     return route_stop
 
 
-def get_or_create_stop(session, recorded_at_time, stop_point_ref):
-    stop = session.query(Stop).filter(
-        Stop.min_date <= recorded_at_time.date(),
-        recorded_at_time.date() <= Stop.max_date,
-        Stop.code == stop_point_ref,
-        Stop.is_from_gtfs == False
-    ).one_or_none()
+def get_or_create_stop(session, recorded_at_time, stop_point_ref, stats):
+    with logs.debug_time_stats('stop_get', stats, log_if_more_then_seconds=1):
+        stop = session.query(Stop).filter(
+            Stop.min_date <= recorded_at_time.date(),
+            recorded_at_time.date() <= Stop.max_date,
+            Stop.code == stop_point_ref,
+            Stop.is_from_gtfs == False
+        ).one_or_none()
     if not stop:
         stop = Stop(
             min_date=recorded_at_time.date(),
@@ -115,7 +123,8 @@ def get_or_create_stop(session, recorded_at_time, stop_point_ref):
             code=stop_point_ref,
             is_from_gtfs=False
         )
-        session.add(stop)
+        with logs.debug_time_stats('stop_add', stats, log_if_more_then_seconds=1):
+            session.add(stop)
     return stop
 
 
@@ -132,7 +141,7 @@ def save_monitored_stop_visit_parse_error(monitored_stop_visit, snapshot_id):
         f.write(json.dumps(monitored_stop_visit)+"\n")
 
 
-def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id):
+def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, stats):
     try:
         recorded_at_time = parse_timestr(monitored_stop_visit['RecordedAtTime'])
         line_ref = int(monitored_stop_visit['MonitoredVehicleJourney']['LineRef'])
@@ -152,10 +161,10 @@ def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id):
         if config.DEBUG:
             print("Failed to parse monitored stop visit: {}".format(monitored_stop_visit))
         return None
-    route = get_or_create_route(session, recorded_at_time, line_ref, operator_ref)
-    ride = get_or_create_ride(session, journey_ref, route, scheduled_start_time, vehicle_ref)
-    stop = get_or_create_stop(session, recorded_at_time, stop_point_ref)
-    route_stop = get_or_create_route_stop(session, stop, route, order)
+    route = get_or_create_route(session, recorded_at_time, line_ref, operator_ref, stats)
+    ride = get_or_create_ride(session, journey_ref, route, scheduled_start_time, vehicle_ref, stats)
+    stop = get_or_create_stop(session, recorded_at_time, stop_point_ref, stats)
+    route_stop = get_or_create_route_stop(session, stop, route, order, stats)
     return {
         'ride': ride,
         'route_stop': route_stop,
@@ -172,7 +181,8 @@ def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id):
 def process_snapshot(session, snapshot_id, force_reload=False, snapshot_data=None):
     print("Processing snapshot: {}".format(snapshot_id))
     if snapshot_data is None:
-        snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
+        with logs.debug_time('open_bus_siri_requester.storage.read', snapshot_id=snapshot_id):
+            snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
     monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
     if os.path.exists(monitored_stop_visit_parse_errors_filename):
         os.unlink(monitored_stop_visit_parse_errors_filename)
@@ -180,20 +190,34 @@ def process_snapshot(session, snapshot_id, force_reload=False, snapshot_data=Non
         os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
     error, monitored_stop_visit, siri_snapshot, is_new_snapshot = None, None, None, None
     num_failed_parse_vehicle_locations, num_successful_parse_vehicle_locations = 0, 0
+    stats = defaultdict(int)
     try:
         for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
             if siri_snapshot is None:
-                siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
-            parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id)
+                with logs.debug_time('get_or_create_siri_snapshot', snapshot_id=snapshot_id):
+                    siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
+            parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, stats)
             if parsed_monitored_stop_visit:
                 num_successful_parse_vehicle_locations += 1
                 vehicle_location = VehicleLocation(
                     siri_snapshot=siri_snapshot,
                     **parsed_monitored_stop_visit
                 )
-                session.add(vehicle_location)
+                with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
+                    session.add(vehicle_location)
             else:
                 num_failed_parse_vehicle_locations += 1
+        if config.DEBUG:
+            for title in [
+                'ride_get', 'ride_add', 'route_get', 'route_add',
+                'route_stop_get', 'route_stop_add',
+                'stop_get', 'stop_add',
+                'vehicle_location_add'
+            ]:
+                total_seconds = stats['{}-total-seconds'.format(title)]
+                total_calls = stats['{}-total-calls'.format(title)]
+                if total_calls > 0:
+                    print('avg. {} call seconds: {} ({} / {})'.format(title, total_seconds / total_calls, total_seconds, total_calls))
     except Exception as e:
         print("Unexpected exception processing monitored_stop_visit {}".format(monitored_stop_visit))
         if siri_snapshot:
@@ -210,7 +234,8 @@ def process_snapshot(session, snapshot_id, force_reload=False, snapshot_data=Non
         siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
         siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
         siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
-        session.commit()
+        with logs.debug_time('session.commit', snapshot_id=snapshot_id):
+            session.commit()
 
 
 @session_decorator
