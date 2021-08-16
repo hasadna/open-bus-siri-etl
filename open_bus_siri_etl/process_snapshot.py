@@ -7,7 +7,7 @@ from collections import defaultdict
 import pytz
 import sqlalchemy
 
-from open_bus_stride_db.db import session_decorator, get_session
+from open_bus_stride_db.db import session_decorator, get_session, Session
 from open_bus_stride_db.model import (
     SiriSnapshot, SiriSnapshotEtlStatusEnum, VehicleLocation, Ride, RouteStop, Route, Stop
 )
@@ -117,45 +117,93 @@ class ObjectsMaker:
         else:
             raise Exception("invalid objname: {}".format(objname))
 
+    def get_existing_object_nocache(self, objname, session, **kwargs):
+        if objname == 'route':
+            recorded_at_time = kwargs['recorded_at_time']
+            return session.query(Route).filter(
+                Route.min_date <= recorded_at_time.date(),
+                recorded_at_time.date() <= Route.max_date,
+                Route.is_from_gtfs == False,
+                Route.operator_ref == int(kwargs['operator_ref']),
+                Route.line_ref == int(kwargs['line_ref'])
+            ).one_or_none()
+        elif objname == 'stop':
+            recorded_at_time = kwargs['recorded_at_time']
+            return session.query(Stop).filter(
+                Stop.min_date <= recorded_at_time.date(),
+                recorded_at_time.date() <= Stop.max_date,
+                Stop.is_from_gtfs == False,
+                Stop.code == int(kwargs['stop_point_ref'])
+            ).one_or_none()
+        elif objname == 'route_stop':
+            recorded_at_time = kwargs['recorded_at_time']
+            return session.query(RouteStop).join(Route).join(Stop).filter(
+                Route.min_date <= recorded_at_time.date(),
+                recorded_at_time.date() <= Route.max_date,
+                RouteStop.is_from_gtfs == False,
+                Stop.id == kwargs['stop'].id,
+                Route.id == kwargs['route'].id,
+                RouteStop.order == int(kwargs['order'])
+            ).one_or_none()
+        elif objname == 'ride':
+            scheduled_start_time = kwargs['scheduled_start_time']
+            return session.query(Ride).join(Route).filter(
+                Ride.scheduled_start_time == scheduled_start_time,
+                Ride.is_from_gtfs == False,
+                Route.id == kwargs['route'].id,
+                Ride.journey_ref == kwargs['journey_ref'],
+                Ride.vehicle_ref == kwargs['vehicle_ref']
+            ).one_or_none()
+        else:
+            raise Exception("invalid objname: {}".format(objname))
+
     def create_new_object(self, objname, session, **kwargs):
         if objname == 'stop':
             recorded_at_time = kwargs['recorded_at_time']
             recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            new_object = self.stops_cache.setdefault(recorded_at_datestr, {})[int(kwargs['stop_point_ref'])] = Stop(
+            new_object = Stop(
                 min_date=kwargs['recorded_at_time'].date(),
                 max_date=kwargs['recorded_at_time'].date(),
                 code=kwargs['stop_point_ref'],
                 is_from_gtfs=False
             )
+            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+                self.stops_cache.setdefault(recorded_at_datestr, {})[int(kwargs['stop_point_ref'])] = new_object
         elif objname == 'route':
             recorded_at_time = kwargs['recorded_at_time']
             recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            new_object = self.routes_cache.setdefault(recorded_at_datestr, {}).setdefault(kwargs['operator_ref'], {})[kwargs['line_ref']] = Route(
+            new_object = Route(
                 min_date=kwargs['recorded_at_time'].date(),
                 max_date=kwargs['recorded_at_time'].date(),
                 line_ref=kwargs['line_ref'],
                 operator_ref=kwargs['operator_ref'],
                 is_from_gtfs=False
             )
+            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+                self.routes_cache.setdefault(recorded_at_datestr, {}).setdefault(kwargs['operator_ref'], {})[kwargs['line_ref']] = new_object
         elif objname == 'ride':
             scheduled_start_time = kwargs['scheduled_start_time']
             scheduled_start_datestr = scheduled_start_time.strftime('%Y%m%d')
-            new_object = self.rides_cache.setdefault(scheduled_start_datestr, {})['{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref'])] = Ride(
+            new_object = Ride(
                 route=kwargs['route'],
                 journey_ref=kwargs['journey_ref'],
                 scheduled_start_time=kwargs['scheduled_start_time'],
                 vehicle_ref=kwargs['vehicle_ref'],
                 is_from_gtfs=False
             )
+            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+                self.rides_cache.setdefault(scheduled_start_datestr, {})['{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref'])] = new_object
         elif objname == 'route_stop':
             recorded_at_time = kwargs['recorded_at_time']
             recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            new_object = self.route_stops_cache.setdefault(recorded_at_datestr, {})['{}-{}-{}'.format(kwargs['stop'].id, kwargs['route'].id, kwargs['order'])] = RouteStop(
+            new_object = RouteStop(
                 stop=kwargs['stop'],
                 route=kwargs['route'],
                 order=kwargs['order'],
                 is_from_gtfs=False
             )
+            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+                self.route_stops_cache.setdefault(recorded_at_datestr, {})['{}-{}-{}'.format(kwargs['stop'].id, kwargs['route'].id, kwargs['order'])] = new_object
         else:
             raise Exception('invalid objname: {}'.format(objname))
         session.add(new_object)
@@ -163,7 +211,10 @@ class ObjectsMaker:
 
     def get_or_create(self, objname, session, **kwargs):
         with logs.debug_time_stats('{}_get'.format(objname), self.stats, log_if_more_then_seconds=1):
-            existing_object = self.get_existing_object(objname, session, **kwargs)
+            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+                existing_object = self.get_existing_object(objname, session, **kwargs)
+            else:
+                existing_object = self.get_existing_object_nocache(objname, session, **kwargs)
         if existing_object:
             return existing_object
         else:

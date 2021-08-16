@@ -19,9 +19,19 @@ def download_latest_snapshots():
 
 @main.command()
 @click.argument('SNAPSHOT_ID')
+def download_snapshot(snapshot_id):
+    """Download a specific snapshot from remote storage to local storage"""
+    local_development_helpers.download_snapshot(snapshot_id)
+
+
+@main.command()
+@click.argument('SNAPSHOT_ID')
 @click.option('--force-reload', is_flag=True)
-def process_snapshot(**kwargs):
-    open_bus_siri_etl.process_snapshot.process_snapshot(**kwargs)
+@click.option('--download', is_flag=True)
+def process_snapshot(snapshot_id, force_reload, download):
+    if download:
+        local_development_helpers.download_snapshot(snapshot_id)
+    open_bus_siri_etl.process_snapshot.process_snapshot(snapshot_id=snapshot_id, force_reload=force_reload)
 
 
 @main.command()

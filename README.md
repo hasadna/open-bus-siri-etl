@@ -106,14 +106,10 @@ Install tests requirements
 pip install -r tests/requirements.txt
 ```
 
-Start a stride DB for testing and update to latest migration:
+Start a fresh stride DB for testing, run the following from open-bus-pipelines repo:
 
 ```
-docker rm -f stride-db;
-sudo rm -rf .data/tests-db &&\
-docker run --rm --name stride-db -e POSTGRES_PASSWORD=123456 -p 5432:5432 -v `pwd`/.data/tests-db:/var/lib/postgresql/data -d postgres:13 &&\
-sleep 2 &&\
-(cd ../open-bus-stride-db && alembic upgrade head)
+docker-compose down; docker volume rm open-bus-pipelines_stride-db; docker-compose up -d stride-db-init
 ```
 
 Run tests
