@@ -137,7 +137,7 @@ def assert_test_siri_snapshot(session, snapshot_id=TEST_SNAPSHOT_ID, first_vehic
 def process_test_siri_snapshot(session, skip_clear=False, force_reload=False):
     if not skip_clear:
         common.clear_siri_data(session, datetime.date(2019, 5, 5))
-    process_snapshot(session, TEST_SNAPSHOT_ID, snapshot_data=TEST_SNAPSHOT_DATA, force_reload=force_reload)
+    process_snapshot(session=session, snapshot_id=TEST_SNAPSHOT_ID, snapshot_data=TEST_SNAPSHOT_DATA, force_reload=force_reload)
     return assert_test_siri_snapshot(session)
 
 
