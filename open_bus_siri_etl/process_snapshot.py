@@ -7,7 +7,7 @@ from collections import defaultdict
 import pytz
 import sqlalchemy
 
-from open_bus_stride_db.db import session_decorator
+from open_bus_stride_db.db import session_decorator, get_session
 from open_bus_stride_db.model import (
     SiriSnapshot, SiriSnapshotEtlStatusEnum, VehicleLocation, Ride, RouteStop, Route, Stop
 )
@@ -208,66 +208,67 @@ def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objec
     }
 
 
-def process_snapshot(session, snapshot_id, force_reload=False, snapshot_data=None, objects_maker=None):
+def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_data=None, objects_maker=None):
     print("Processing snapshot: {}".format(snapshot_id))
-    if objects_maker is None:
-        objects_maker = ObjectsMaker()
-    if snapshot_data is None:
-        with logs.debug_time('open_bus_siri_requester.storage.read', snapshot_id=snapshot_id):
-            snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
-    monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
-    if os.path.exists(monitored_stop_visit_parse_errors_filename):
-        os.unlink(monitored_stop_visit_parse_errors_filename)
-    else:
-        os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
-    error, monitored_stop_visit, siri_snapshot, is_new_snapshot = None, None, None, None
-    num_failed_parse_vehicle_locations, num_successful_parse_vehicle_locations = 0, 0
-    stats = objects_maker.stats = defaultdict(int)
-    try:
-        for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
-            if siri_snapshot is None:
-                with logs.debug_time('get_or_create_siri_snapshot', snapshot_id=snapshot_id):
-                    siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
-            parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objects_maker)
-            if parsed_monitored_stop_visit:
-                num_successful_parse_vehicle_locations += 1
-                vehicle_location = VehicleLocation(
-                    siri_snapshot=siri_snapshot,
-                    **parsed_monitored_stop_visit
-                )
-                with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
-                    session.add(vehicle_location)
-            else:
-                num_failed_parse_vehicle_locations += 1
-        if config.DEBUG:
-            for title in [
-                'ride_get', 'ride_add', 'route_get', 'route_add',
-                'route_stop_get', 'route_stop_add',
-                'stop_get', 'stop_add',
-                'vehicle_location_add'
-            ]:
-                total_seconds = stats['{}-total-seconds'.format(title)]
-                total_calls = stats['{}-total-calls'.format(title)]
-                if total_calls > 0:
-                    print('avg. {} call seconds: {} ({} / {})'.format(title, total_seconds / total_calls, total_seconds, total_calls))
-    except Exception as e:
-        print("Unexpected exception processing monitored_stop_visit {}".format(monitored_stop_visit))
-        if siri_snapshot:
-            siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.error
-            siri_snapshot.error = str(e)
+    with get_session(session) as session:
+        if objects_maker is None:
+            objects_maker = ObjectsMaker()
+        if snapshot_data is None:
+            with logs.debug_time('open_bus_siri_requester.storage.read', snapshot_id=snapshot_id):
+                snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
+        monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
+        if os.path.exists(monitored_stop_visit_parse_errors_filename):
+            os.unlink(monitored_stop_visit_parse_errors_filename)
+        else:
+            os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
+        error, monitored_stop_visit, siri_snapshot, is_new_snapshot = None, None, None, None
+        num_failed_parse_vehicle_locations, num_successful_parse_vehicle_locations = 0, 0
+        stats = objects_maker.stats = defaultdict(int)
+        try:
+            for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
+                if siri_snapshot is None:
+                    with logs.debug_time('get_or_create_siri_snapshot', snapshot_id=snapshot_id):
+                        siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
+                parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objects_maker)
+                if parsed_monitored_stop_visit:
+                    num_successful_parse_vehicle_locations += 1
+                    vehicle_location = VehicleLocation(
+                        siri_snapshot=siri_snapshot,
+                        **parsed_monitored_stop_visit
+                    )
+                    with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
+                        session.add(vehicle_location)
+                else:
+                    num_failed_parse_vehicle_locations += 1
+            if config.DEBUG:
+                for title in [
+                    'ride_get', 'ride_add', 'route_get', 'route_add',
+                    'route_stop_get', 'route_stop_add',
+                    'stop_get', 'stop_add',
+                    'vehicle_location_add'
+                ]:
+                    total_seconds = stats['{}-total-seconds'.format(title)]
+                    total_calls = stats['{}-total-calls'.format(title)]
+                    if total_calls > 0:
+                        print('avg. {} call seconds: {} ({} / {})'.format(title, total_seconds / total_calls, total_seconds, total_calls))
+        except Exception as e:
+            print("Unexpected exception processing monitored_stop_visit {}".format(monitored_stop_visit))
+            if siri_snapshot:
+                siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.error
+                siri_snapshot.error = str(e)
+                siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
+                siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
+                siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
+            session.commit()
+            raise
+        else:
+            siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loaded
+            siri_snapshot.error = ''
             siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
             siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
             siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
-        session.commit()
-        raise
-    else:
-        siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loaded
-        siri_snapshot.error = ''
-        siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
-        siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
-        siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
-        with logs.debug_time('session.commit', snapshot_id=snapshot_id):
-            session.commit()
+            with logs.debug_time('session.commit', snapshot_id=snapshot_id):
+                session.commit()
 
 
 @session_decorator
@@ -300,7 +301,7 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
         except:
             snapshot_data = None
         if snapshot_data:
-            process_snapshot(session, snapshot_id=snapshot_id, snapshot_data=snapshot_data, objects_maker=objects_maker)
+            process_snapshot(session=session, snapshot_id=snapshot_id, snapshot_data=snapshot_data, objects_maker=objects_maker)
             stats['processed'] += 1
         cur_datetime = cur_datetime + datetime.timedelta(minutes=1)
     if config.DEBUG:

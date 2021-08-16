@@ -20,9 +20,8 @@ def download_latest_snapshots():
 @main.command()
 @click.argument('SNAPSHOT_ID')
 @click.option('--force-reload', is_flag=True)
-def process_snapshot(snapshot_id, force_reload):
-    with get_session() as session:
-        open_bus_siri_etl.process_snapshot.process_snapshot(session, snapshot_id, force_reload)
+def process_snapshot(**kwargs):
+    open_bus_siri_etl.process_snapshot.process_snapshot(**kwargs)
 
 
 @main.command()
