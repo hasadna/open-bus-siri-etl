@@ -30,7 +30,7 @@ jobs:
           --network host \
           -e SQLALCHEMY_URL=postgresql://postgres:123456@localhost \
           --rm --name stride-db-migrations \
-          docker.pkg.github.com/hasadna/open-bus-stride-db/open-bus-stride-db:1d3b939529667e18f5bc415679cc844c9d9c6afa &&\
+          `cat open-bus-stride-db-docker-image.txt` &&\
         docker run \
           --network host \
           -e SQLALCHEMY_URL=postgresql://postgres:123456@localhost \
