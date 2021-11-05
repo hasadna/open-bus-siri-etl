@@ -113,7 +113,7 @@ class ObjectsMaker:
                     Ride.is_from_gtfs == False
                 ):
                     self.rides_cache[scheduled_start_datestr]['{}-{}-{}'.format(ride.route.id, ride.journey_ref, ride.vehicle_ref)] = ride
-                return self.rides_cache[scheduled_start_datestr].get('{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref']))
+            return self.rides_cache[scheduled_start_datestr].get('{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref']))
         else:
             raise Exception("invalid objname: {}".format(objname))
 
@@ -157,7 +157,7 @@ class ObjectsMaker:
         else:
             raise Exception("invalid objname: {}".format(objname))
 
-    def create_new_object(self, objname, session, **kwargs):
+    def create_new_object(self, objname, session, use_objectsmaker_cache, **kwargs):
         if objname == 'stop':
             recorded_at_time = kwargs['recorded_at_time']
             recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
@@ -167,7 +167,7 @@ class ObjectsMaker:
                 code=kwargs['stop_point_ref'],
                 is_from_gtfs=False
             )
-            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+            if use_objectsmaker_cache:
                 self.stops_cache.setdefault(recorded_at_datestr, {})[int(kwargs['stop_point_ref'])] = new_object
         elif objname == 'route':
             recorded_at_time = kwargs['recorded_at_time']
@@ -179,7 +179,7 @@ class ObjectsMaker:
                 operator_ref=kwargs['operator_ref'],
                 is_from_gtfs=False
             )
-            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+            if use_objectsmaker_cache:
                 self.routes_cache.setdefault(recorded_at_datestr, {}).setdefault(kwargs['operator_ref'], {})[kwargs['line_ref']] = new_object
         elif objname == 'ride':
             scheduled_start_time = kwargs['scheduled_start_time']
@@ -191,7 +191,7 @@ class ObjectsMaker:
                 vehicle_ref=kwargs['vehicle_ref'],
                 is_from_gtfs=False
             )
-            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+            if use_objectsmaker_cache:
                 self.rides_cache.setdefault(scheduled_start_datestr, {})['{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref'])] = new_object
         elif objname == 'route_stop':
             recorded_at_time = kwargs['recorded_at_time']
@@ -202,16 +202,16 @@ class ObjectsMaker:
                 order=kwargs['order'],
                 is_from_gtfs=False
             )
-            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+            if use_objectsmaker_cache:
                 self.route_stops_cache.setdefault(recorded_at_datestr, {})['{}-{}-{}'.format(kwargs['stop'].id, kwargs['route'].id, kwargs['order'])] = new_object
         else:
             raise Exception('invalid objname: {}'.format(objname))
         session.add(new_object)
         return new_object
 
-    def get_or_create(self, objname, session, **kwargs):
+    def get_or_create(self, objname, session, use_objectsmaker_cache, **kwargs):
         with logs.debug_time_stats('{}_get'.format(objname), self.stats, log_if_more_then_seconds=1):
-            if config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE:
+            if use_objectsmaker_cache:
                 existing_object = self.get_existing_object(objname, session, **kwargs)
             else:
                 existing_object = self.get_existing_object_nocache(objname, session, **kwargs)
@@ -219,11 +219,11 @@ class ObjectsMaker:
             return existing_object
         else:
             with logs.debug_time_stats('{}_add'.format(objname), self.stats, log_if_more_then_seconds=1):
-                new_object = self.create_new_object(objname, session, **kwargs)
+                new_object = self.create_new_object(objname, session, use_objectsmaker_cache, **kwargs)
             return new_object
 
 
-def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objects_maker):
+def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objects_maker, use_objectsmaker_cache):
     try:
         recorded_at_time = parse_timestr(monitored_stop_visit['RecordedAtTime'])
         line_ref = int(monitored_stop_visit['MonitoredVehicleJourney']['LineRef'])
@@ -243,10 +243,10 @@ def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objec
         if config.DEBUG:
             print("Failed to parse monitored stop visit: {}".format(monitored_stop_visit))
         return None
-    route = objects_maker.get_or_create('route', session, recorded_at_time=recorded_at_time, line_ref=line_ref, operator_ref=operator_ref)
-    ride = objects_maker.get_or_create('ride', session, journey_ref=journey_ref, route=route, scheduled_start_time=scheduled_start_time, vehicle_ref=vehicle_ref)
-    stop = objects_maker.get_or_create('stop', session, recorded_at_time=recorded_at_time, stop_point_ref=stop_point_ref)
-    route_stop = objects_maker.get_or_create('route_stop', session, stop=stop, route=route, order=order, recorded_at_time=recorded_at_time)
+    route = objects_maker.get_or_create('route', session, use_objectsmaker_cache, recorded_at_time=recorded_at_time, line_ref=line_ref, operator_ref=operator_ref)
+    ride = objects_maker.get_or_create('ride', session, use_objectsmaker_cache, journey_ref=journey_ref, route=route, scheduled_start_time=scheduled_start_time, vehicle_ref=vehicle_ref)
+    stop = objects_maker.get_or_create('stop', session, use_objectsmaker_cache, recorded_at_time=recorded_at_time, stop_point_ref=stop_point_ref)
+    route_stop = objects_maker.get_or_create('route_stop', session, use_objectsmaker_cache, stop=stop, route=route, order=order, recorded_at_time=recorded_at_time)
     return {
         'ride': ride,
         'route_stop': route_stop,
@@ -259,67 +259,77 @@ def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objec
     }
 
 
-def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_data=None, objects_maker=None):
-    print("Processing snapshot: {}".format(snapshot_id))
-    with get_session(session) as session:
-        if objects_maker is None:
-            objects_maker = ObjectsMaker()
-        if snapshot_data is None:
-            with logs.debug_time('open_bus_siri_requester.storage.read', snapshot_id=snapshot_id):
-                snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
-        monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
-        if os.path.exists(monitored_stop_visit_parse_errors_filename):
-            os.unlink(monitored_stop_visit_parse_errors_filename)
-        else:
-            os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
-        error, monitored_stop_visit, siri_snapshot, is_new_snapshot = None, None, None, None
-        num_failed_parse_vehicle_locations, num_successful_parse_vehicle_locations = 0, 0
-        stats = objects_maker.stats = defaultdict(int)
-        try:
-            for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
-                if siri_snapshot is None:
-                    with logs.debug_time('get_or_create_siri_snapshot', snapshot_id=snapshot_id):
-                        siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
-                parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objects_maker)
-                if parsed_monitored_stop_visit:
-                    num_successful_parse_vehicle_locations += 1
-                    vehicle_location = VehicleLocation(
-                        siri_snapshot=siri_snapshot,
-                        **parsed_monitored_stop_visit
-                    )
-                    with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
-                        session.add(vehicle_location)
-                else:
-                    num_failed_parse_vehicle_locations += 1
-            if config.DEBUG:
-                for title in [
-                    'ride_get', 'ride_add', 'route_get', 'route_add',
-                    'route_stop_get', 'route_stop_add',
-                    'stop_get', 'stop_add',
-                    'vehicle_location_add'
-                ]:
-                    total_seconds = stats['{}-total-seconds'.format(title)]
-                    total_calls = stats['{}-total-calls'.format(title)]
-                    if total_calls > 0:
-                        print('avg. {} call seconds: {} ({} / {})'.format(title, total_seconds / total_calls, total_seconds, total_calls))
-        except Exception as e:
-            print("Unexpected exception processing monitored_stop_visit {}".format(monitored_stop_visit))
-            if siri_snapshot:
-                siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.error
-                siri_snapshot.error = str(e)
+def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_data=None, objects_maker=None,
+                     force_cache=False, force_no_cache=False):
+    if force_cache:
+        assert not force_no_cache
+        use_objectsmaker_cache = True
+    elif force_no_cache:
+        use_objectsmaker_cache = False
+    else:
+        use_objectsmaker_cache = config.OPEN_BUS_SIRI_ETL_USE_OBJECTSMAKER_CACHE
+    with logs.debug_time('process_snapshot', snapshot_id=snapshot_id):
+        print("Processing snapshot: {} (use_objectsmaker_cache={})".format(snapshot_id, use_objectsmaker_cache))
+        with get_session(session) as session:
+            if objects_maker is None:
+                objects_maker = ObjectsMaker()
+            if snapshot_data is None:
+                with logs.debug_time('open_bus_siri_requester.storage.read', snapshot_id=snapshot_id):
+                    snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
+            monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
+            if os.path.exists(monitored_stop_visit_parse_errors_filename):
+                os.unlink(monitored_stop_visit_parse_errors_filename)
+            else:
+                os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
+            error, monitored_stop_visit, siri_snapshot, is_new_snapshot = None, None, None, None
+            num_failed_parse_vehicle_locations, num_successful_parse_vehicle_locations = 0, 0
+            stats = objects_maker.stats = defaultdict(int)
+            try:
+                for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
+                    if siri_snapshot is None:
+                        with logs.debug_time('get_or_create_siri_snapshot', snapshot_id=snapshot_id):
+                            siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
+                    parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objects_maker, use_objectsmaker_cache)
+                    if parsed_monitored_stop_visit:
+                        num_successful_parse_vehicle_locations += 1
+                        vehicle_location = VehicleLocation(
+                            siri_snapshot=siri_snapshot,
+                            **parsed_monitored_stop_visit
+                        )
+                        with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
+                            session.add(vehicle_location)
+                    else:
+                        num_failed_parse_vehicle_locations += 1
+                if config.DEBUG:
+                    for title in [
+                        'ride_get', 'ride_add', 'route_get', 'route_add',
+                        'route_stop_get', 'route_stop_add',
+                        'stop_get', 'stop_add',
+                        'vehicle_location_add'
+                    ]:
+                        total_seconds = stats['{}-total-seconds'.format(title)]
+                        total_calls = stats['{}-total-calls'.format(title)]
+                        if total_calls > 0:
+                            print('avg. {} call seconds: {} ({} / {})'.format(title, total_seconds / total_calls, total_seconds, total_calls))
+            except Exception as e:
+                print("Unexpected exception processing monitored_stop_visit {}".format(monitored_stop_visit))
+                session.rollback()
+                if siri_snapshot:
+                    siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.error
+                    siri_snapshot.error = str(e)
+                    siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
+                    siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
+                    siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
+                session.commit()
+                raise
+            else:
+                siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loaded
+                siri_snapshot.error = ''
                 siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
                 siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
                 siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
-            session.commit()
-            raise
-        else:
-            siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loaded
-            siri_snapshot.error = ''
-            siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
-            siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
-            siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
-            with logs.debug_time('session.commit', snapshot_id=snapshot_id):
-                session.commit()
+                with logs.debug_time('session.commit', snapshot_id=snapshot_id):
+                    session.commit()
 
 
 @session_decorator
