@@ -28,14 +28,11 @@ def download_snapshot(snapshot_id):
 @click.argument('SNAPSHOT_ID')
 @click.option('--force-reload', is_flag=True)
 @click.option('--download', is_flag=True)
-@click.option('--force-cache', is_flag=True, help='use the objects maker cache')
-@click.option('--force-no-cache', is_flag=True, help="don't use the objects maker cache")
-def process_snapshot(snapshot_id, force_reload, download, force_cache, force_no_cache):
+def process_snapshot(snapshot_id, force_reload, download):
     if download:
         local_development_helpers.download_snapshot(snapshot_id)
     open_bus_siri_etl.process_snapshot.process_snapshot(
-        snapshot_id=snapshot_id, force_reload=force_reload,
-        force_cache=force_cache, force_no_cache=force_no_cache
+        snapshot_id=snapshot_id, force_reload=force_reload
     )
 
 

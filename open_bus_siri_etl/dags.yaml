@@ -3,9 +3,7 @@
     Process a single snapshot and load it to DB.
     {
         "snapshot_id": "2021/07/05/12/50",
-        "force_reload": false,
-        "force_cache": false,
-        "force_no_cache": false
+        "force_reload": false
     }
   tasks:
     - id: process-snapshot
@@ -16,5 +14,3 @@
         kwargs:
           snapshot_id: {}
           force_reload: {default: false}
-          force_cache: {default: false}
-          force_no_cache: {default: false}
