@@ -9,7 +9,7 @@ import pytest
 
 import open_bus_siri_requester.config, open_bus_siri_requester.storage
 from open_bus_siri_etl.process_snapshot import process_snapshot, process_new_snapshots
-from open_bus_stride_db.model import SiriSnapshot, Route, Stop, RouteStop, Ride, SiriSnapshotEtlStatusEnum
+from open_bus_stride_db.model import SiriSnapshot, SiriRoute, SiriStop, SiriRideStop, SiriRide, SiriSnapshotEtlStatusEnum
 from open_bus_siri_etl.config import OPEN_BUS_SIRI_ETL_ROOTPATH
 
 from . import common
@@ -85,33 +85,24 @@ def assert_first_vehicle_location(vehicle_location, date=None, time=None, with_a
     assert vehicle_location.bearing, vehicle_location.velocity == (186, 50)
     assert vehicle_location.distance_from_journey_start == 4903
 
-    route_stop = vehicle_location.route_stop
-    assert route_stop.order == 13
-    assert route_stop.is_from_gtfs == False
+    siri_ride_stop = vehicle_location.siri_ride_stop
+    assert siri_ride_stop.order == 13
 
-    route = route_stop.route
-    assert route.min_date == datetime.date(date.year, date.month, date.day)
-    assert route.max_date == datetime.date(date.year, date.month, date.day)
-    assert route.line_ref, route.operator_ref == (1, 25)
-    assert route.is_from_gtfs == False
+    siri_stop = siri_ride_stop.siri_stop
+    assert siri_stop.code == 32043
 
-    stop = route_stop.stop
-    assert stop.min_date == datetime.date(date.year, date.month, date.day)
-    assert stop.max_date == datetime.date(date.year, date.month, date.day)
-    assert stop.code == 32043
-    assert stop.is_from_gtfs == False
+    siri_ride = siri_ride_stop.siri_ride
+    assert siri_ride.journey_ref == '2019-05-05-56644704'
+    assert siri_ride.scheduled_start_time == datetime.datetime(date.year, date.month, date.day, 12, 45, 00, 0)
+    assert siri_ride.vehicle_ref == '8245384'
 
-    ride = vehicle_location.ride
-    assert ride.journey_ref == '2019-05-05-56644704'
-    assert ride.scheduled_start_time == datetime.datetime(date.year, date.month, date.day, 12, 45, 00, 0)
-    assert ride.vehicle_ref == '8245384'
-    assert ride.is_from_gtfs == False
+    siri_route = siri_ride.siri_route
+    assert siri_route.line_ref, siri_route.operator_ref == (1, 25)
 
     if with_assert_ids:
-        assert {o.id for o in route_stop.vehicle_locations} == {vehicle_location.id}
-        assert {o.id for o in route.route_stops} == {route_stop.id}
-        assert {o.id for o in route.rides} == {ride.id}
-        assert {o.id for o in ride.vehicle_locations} == {vehicle_location.id}
+        assert {o.id for o in siri_ride_stop.siri_vehicle_locations} == {vehicle_location.id}
+        assert {o.id for o in siri_route.siri_rides} == {siri_ride.id}
+        assert {o.id for o in siri_ride.siri_ride_stops} == {siri_ride_stop.id}
 
 
 def assert_test_siri_snapshot(session, snapshot_id=TEST_SNAPSHOT_ID, first_vehicle_location_date=None, first_vehicle_location_time=None, first_vehicle_location_with_assert_ids=True):
@@ -123,8 +114,8 @@ def assert_test_siri_snapshot(session, snapshot_id=TEST_SNAPSHOT_ID, first_vehic
     assert siri_snapshot.error == ''
     assert siri_snapshot.num_successful_parse_vehicle_locations == 3
     assert siri_snapshot.num_failed_parse_vehicle_locations == 2
-    assert len(siri_snapshot.vehicle_locations) == 3
-    vehicle_location = siri_snapshot.vehicle_locations[0]
+    assert len(siri_snapshot.siri_vehicle_locations) == 3
+    vehicle_location = siri_snapshot.siri_vehicle_locations[0]
     assert_first_vehicle_location(vehicle_location, first_vehicle_location_date, first_vehicle_location_time, with_assert_ids=first_vehicle_location_with_assert_ids)
     with open(os.path.join(OPEN_BUS_SIRI_ETL_ROOTPATH, 'monitored_stop_visits_parse_failed', snapshot_id, 'jsonlines')) as f:
         monitored_stop_visits_parse_failures = [json.loads(line.strip()) for line in f if line.strip()]
@@ -136,7 +127,7 @@ def assert_test_siri_snapshot(session, snapshot_id=TEST_SNAPSHOT_ID, first_vehic
 
 def process_test_siri_snapshot(session, skip_clear=False, force_reload=False):
     if not skip_clear:
-        common.clear_siri_data(session, datetime.date(2019, 5, 5))
+        common.clear_siri_data(session)
     process_snapshot(session=session, snapshot_id=TEST_SNAPSHOT_ID, snapshot_data=TEST_SNAPSHOT_DATA, force_reload=force_reload)
     return assert_test_siri_snapshot(session)
 
@@ -146,20 +137,20 @@ def test_process_snapshot_all_new_objects(session):
 
 
 def test_process_snapshot_existing_objects(session):
-    common.clear_siri_data(session, datetime.date(2019, 5, 5))
-    min_max_date_is_from_gtfs = dict(min_date=datetime.date(2019, 5, 5), max_date=datetime.date(2019, 5, 5), is_from_gtfs=False)
-    stop = Stop(code=32043, **min_max_date_is_from_gtfs)
-    session.add(stop)
-    route = Route(line_ref=1, operator_ref=25, **min_max_date_is_from_gtfs)
-    session.add(route)
-    route_stop = RouteStop(route=route, stop=stop, order=13, is_from_gtfs=False)
-    session.add(route_stop)
-    ride = Ride(route=route, journey_ref='2019-05-05-56644704', scheduled_start_time=datetime.datetime(2019, 5, 5, 12, 45, 00, 0, tzinfo=pytz.UTC), vehicle_ref='8245384', is_from_gtfs=False)
-    session.add(ride)
+    common.clear_siri_data(session)
+    siri_stop = SiriStop(code=32043)
+    session.add(siri_stop)
+    siri_route = SiriRoute(line_ref=1, operator_ref=25)
+    session.add(siri_route)
+    siri_ride = SiriRide(siri_route=siri_route, journey_ref='2019-05-05-56644704',
+                scheduled_start_time=datetime.datetime(2019, 5, 5, 12, 45, 00, 0, tzinfo=pytz.UTC),
+                vehicle_ref='8245384')
+    session.add(siri_ride)
+    siri_ride_stop = SiriRideStop(siri_ride=siri_ride, siri_stop=siri_stop, order=13)
+    session.add(siri_ride_stop)
     session.commit()
     siri_snapshot, vehicle_location = process_test_siri_snapshot(session, skip_clear=True)
-    assert vehicle_location.ride.id == ride.id
-    assert vehicle_location.route_stop.id == route_stop.id
+    assert vehicle_location.siri_ride_stop.id == siri_ride_stop.id
 
 
 def test_existing_siri_snapshot_error(session):
@@ -181,10 +172,7 @@ def test_existing_siri_snapshot_loading(session):
 
 
 def test_process_new_snapshots(session):
-    common.clear_siri_data(session, datetime.date(2019, 5, 4))
-    for siri_snapshot in session.query(SiriSnapshot).filter(SiriSnapshot.snapshot_id.startswith('2019/')):
-        session.delete(siri_snapshot)
-    session.commit()
+    common.clear_siri_data(session)
     with tempfile.TemporaryDirectory() as tmpdir:
         open_bus_siri_requester.config.OPEN_BUS_SIRI_STORAGE_ROOTPATH = tmpdir
         # no snapshots available in storage from last snapshots

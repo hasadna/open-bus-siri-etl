@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import datetime
@@ -9,7 +10,8 @@ import sqlalchemy
 
 from open_bus_stride_db.db import session_decorator, get_session, Session
 from open_bus_stride_db.model import (
-    SiriSnapshot, SiriSnapshotEtlStatusEnum, VehicleLocation, Ride, RouteStop, Route, Stop
+    SiriSnapshot, SiriSnapshotEtlStatusEnum,
+    SiriVehicleLocation, SiriRide, SiriRideStop, SiriRoute, SiriStop
 )
 import open_bus_siri_requester.storage
 from .graceful_killer import GracefulKiller
@@ -39,7 +41,7 @@ def get_or_create_siri_snapshot(session, snapshot_id, force_reload):
         raise Exception("snapshot is already in loading status (snapshot_id={})".format(snapshot_id))
     if not is_new_snapshot:
         siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loading
-        session.query(VehicleLocation).filter(VehicleLocation.siri_snapshot==siri_snapshot).delete()
+        session.query(SiriVehicleLocation).filter(SiriVehicleLocation.siri_snapshot==siri_snapshot).delete()
         session.commit()
     return siri_snapshot
 
@@ -61,151 +63,131 @@ class ObjectsMaker:
 
     def __init__(self, stats=None):
         self.stats = stats if stats else defaultdict(int)
-        self.routes_cache = {}
-        self.stops_cache = {}
-        self.route_stops_cache = {}
-        self.rides_cache = {}
+        self.siri_routes_cache = {}
+        self.siri_stops_cache = {}
+        self.siri_ride_stops_cache = {}
+        self.siri_rides_cache = {}
+
+    def __sizeof__(self):
+        return sum(map(sys.getsizeof, (
+            self.stats, self.siri_routes_cache, self.siri_stops_cache,
+            self.siri_ride_stops_cache, self.siri_rides_cache
+        )))
 
     def get_existing_object(self, objname, session, **kwargs):
-        if objname == 'route':
-            recorded_at_time = kwargs['recorded_at_time']
-            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            if recorded_at_datestr not in self.routes_cache:
-                self.routes_cache[recorded_at_datestr] = {}
-                for route in session.query(Route).filter(
-                    Route.min_date <= recorded_at_time.date(),
-                    recorded_at_time.date() <= Route.max_date,
-                    Route.is_from_gtfs == False
-                ):
-                    self.routes_cache[recorded_at_datestr].setdefault(route.operator_ref, {})[route.line_ref] = route
-            return self.routes_cache[recorded_at_datestr].get(kwargs['operator_ref'], {}).get(kwargs['line_ref'])
-        elif objname == 'stop':
-            recorded_at_time = kwargs['recorded_at_time']
-            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            if recorded_at_datestr not in self.stops_cache:
-                self.stops_cache[recorded_at_datestr] = {}
-                for stop in session.query(Stop).filter(
-                        Stop.min_date <= recorded_at_time.date(),
-                        recorded_at_time.date() <= Stop.max_date,
-                        Stop.is_from_gtfs == False
-                ):
-                    self.stops_cache[recorded_at_datestr][int(stop.code)] = stop
-            return self.stops_cache[recorded_at_datestr].get(int(kwargs['stop_point_ref']))
-        elif objname == 'route_stop':
-            recorded_at_time = kwargs['recorded_at_time']
-            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            if recorded_at_datestr not in self.route_stops_cache:
-                self.route_stops_cache[recorded_at_datestr] = {}
-                for route_stop in session.query(RouteStop).join(Route).filter(
-                    Route.min_date <= recorded_at_time.date(),
-                    recorded_at_time.date() <= Route.max_date,
-                    RouteStop.is_from_gtfs == False
-                ):
-                    self.route_stops_cache[recorded_at_datestr]['{}-{}-{}'.format(route_stop.stop.id, route_stop.route.id, route_stop.order)] = route_stop
-            return self.route_stops_cache[recorded_at_datestr].get('{}-{}-{}'.format(kwargs['stop'].id, kwargs['route'].id, kwargs['order']))
-        elif objname == 'ride':
-            scheduled_start_time = kwargs['scheduled_start_time']
-            scheduled_start_datestr = scheduled_start_time.strftime('%Y%m%d')
-            if scheduled_start_datestr not in self.rides_cache:
-                self.rides_cache[scheduled_start_datestr] = {}
-                for ride in session.query(Ride).filter(
-                    Ride.scheduled_start_time.cast(sqlalchemy.Date) == scheduled_start_time.date(),
-                    Ride.is_from_gtfs == False
-                ):
-                    self.rides_cache[scheduled_start_datestr]['{}-{}-{}'.format(ride.route.id, ride.journey_ref, ride.vehicle_ref)] = ride
-            return self.rides_cache[scheduled_start_datestr].get('{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref']))
+        if objname == 'siri_route':
+            operator_ref, line_ref = int(kwargs['operator_ref']), int(kwargs['line_ref'])
+            key = '{}-{}'.format(operator_ref, line_ref)
+            siri_route = self.siri_routes_cache.get(key)
+            if not siri_route:
+                siri_route = self.siri_routes_cache[key] = session.query(SiriRoute).filter(
+                    SiriRoute.operator_ref == operator_ref,
+                    SiriRoute.line_ref == line_ref
+                ).one_or_none()
+            return siri_route
+        elif objname == 'siri_stop':
+            stop_point_ref = int(kwargs['stop_point_ref'])
+            siri_stop = self.siri_stops_cache.get(stop_point_ref)
+            if not siri_stop:
+                siri_stop = self.siri_stops_cache[stop_point_ref] = session.query(SiriStop).filter(
+                    SiriStop.code == stop_point_ref
+                ).one_or_none()
+            return siri_stop
+        elif objname == 'siri_ride':
+            siri_route_id, journey_ref, vehicle_ref = kwargs['siri_route'].id, kwargs['journey_ref'], kwargs['vehicle_ref']
+            key = '{}-{}-{}'.format(siri_route_id, journey_ref, vehicle_ref)
+            siri_ride = self.siri_rides_cache.get(key)
+            if not siri_ride:
+                siri_ride = self.siri_rides_cache[key] = session.query(SiriRide).filter(
+                    SiriRide.siri_route_id == siri_route_id,
+                    SiriRide.journey_ref == journey_ref,
+                    SiriRide.vehicle_ref == vehicle_ref
+                ).one_or_none()
+            return siri_ride
+        elif objname == 'siri_ride_stop':
+            siri_stop_id, siri_ride_id, order = kwargs['siri_stop'].id, kwargs['siri_ride'].id, int(kwargs['order'])
+            key = '{}-{}-{}'.format(siri_stop_id, siri_ride_id, order)
+            siri_ride_stop = self.siri_ride_stops_cache.get(key)
+            if not siri_ride_stop:
+                siri_ride_stop = self.siri_ride_stops_cache[key] = session.query(SiriRideStop).filter(
+                    SiriRideStop.siri_stop_id == siri_stop_id,
+                    SiriRideStop.siri_ride_id == siri_ride_id,
+                    SiriRideStop.order == order
+                ).one_or_none()
+            return siri_ride_stop
         else:
             raise Exception("invalid objname: {}".format(objname))
 
     def get_existing_object_nocache(self, objname, session, **kwargs):
-        if objname == 'route':
-            recorded_at_time = kwargs['recorded_at_time']
-            return session.query(Route).filter(
-                Route.min_date <= recorded_at_time.date(),
-                recorded_at_time.date() <= Route.max_date,
-                Route.is_from_gtfs == False,
-                Route.operator_ref == int(kwargs['operator_ref']),
-                Route.line_ref == int(kwargs['line_ref'])
+        if objname == 'siri_route':
+            operator_ref, line_ref = int(kwargs['operator_ref']), int(kwargs['line_ref'])
+            return  session.query(SiriRoute).filter(
+                SiriRoute.operator_ref == operator_ref,
+                SiriRoute.line_ref == line_ref
             ).one_or_none()
-        elif objname == 'stop':
-            recorded_at_time = kwargs['recorded_at_time']
-            return session.query(Stop).filter(
-                Stop.min_date <= recorded_at_time.date(),
-                recorded_at_time.date() <= Stop.max_date,
-                Stop.is_from_gtfs == False,
-                Stop.code == int(kwargs['stop_point_ref'])
+        elif objname == 'siri_stop':
+            stop_point_ref = int(kwargs['stop_point_ref'])
+            return session.query(SiriStop).filter(
+                SiriStop.code == stop_point_ref
             ).one_or_none()
-        elif objname == 'route_stop':
-            recorded_at_time = kwargs['recorded_at_time']
-            return session.query(RouteStop).join(Route).join(Stop).filter(
-                Route.min_date <= recorded_at_time.date(),
-                recorded_at_time.date() <= Route.max_date,
-                RouteStop.is_from_gtfs == False,
-                Stop.id == kwargs['stop'].id,
-                Route.id == kwargs['route'].id,
-                RouteStop.order == int(kwargs['order'])
+        elif objname == 'siri_ride':
+            siri_route_id, journey_ref, vehicle_ref = kwargs['siri_route'].id, kwargs['journey_ref'], kwargs['vehicle_ref']
+            return session.query(SiriRide).filter(
+                SiriRide.siri_route_id == siri_route_id,
+                SiriRide.journey_ref == journey_ref,
+                SiriRide.vehicle_ref == vehicle_ref
             ).one_or_none()
-        elif objname == 'ride':
-            scheduled_start_time = kwargs['scheduled_start_time']
-            return session.query(Ride).join(Route).filter(
-                Ride.scheduled_start_time == scheduled_start_time,
-                Ride.is_from_gtfs == False,
-                Route.id == kwargs['route'].id,
-                Ride.journey_ref == kwargs['journey_ref'],
-                Ride.vehicle_ref == kwargs['vehicle_ref']
+        elif objname == 'siri_ride_stop':
+            siri_stop_id, siri_ride_id, order = kwargs['siri_stop'].id, kwargs['siri_ride'].id, int(kwargs['order'])
+            return session.query(SiriRideStop).filter(
+                SiriRideStop.siri_stop_id == siri_stop_id,
+                SiriRideStop.siri_ride_id == siri_ride_id,
+                SiriRideStop.order == order
             ).one_or_none()
         else:
             raise Exception("invalid objname: {}".format(objname))
 
     def create_new_object(self, objname, session, use_objectsmaker_cache, **kwargs):
-        if objname == 'stop':
-            recorded_at_time = kwargs['recorded_at_time']
-            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            new_object = Stop(
-                min_date=kwargs['recorded_at_time'].date(),
-                max_date=kwargs['recorded_at_time'].date(),
-                code=kwargs['stop_point_ref'],
-                is_from_gtfs=False
+        if objname == 'siri_route':
+            operator_ref, line_ref = int(kwargs['operator_ref']), int(kwargs['line_ref'])
+            new_object = SiriRoute(
+                line_ref=line_ref,
+                operator_ref=operator_ref
             )
             if use_objectsmaker_cache:
-                self.stops_cache.setdefault(recorded_at_datestr, {})[int(kwargs['stop_point_ref'])] = new_object
-        elif objname == 'route':
-            recorded_at_time = kwargs['recorded_at_time']
-            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            new_object = Route(
-                min_date=kwargs['recorded_at_time'].date(),
-                max_date=kwargs['recorded_at_time'].date(),
-                line_ref=kwargs['line_ref'],
-                operator_ref=kwargs['operator_ref'],
-                is_from_gtfs=False
+                key = '{}-{}'.format(operator_ref, line_ref)
+                self.siri_routes_cache[key] = new_object
+        elif objname == 'siri_ride':
+            siri_route, journey_ref, vehicle_ref, scheduled_start_time = kwargs['siri_route'], kwargs['journey_ref'], kwargs['vehicle_ref'], kwargs['scheduled_start_time']
+            new_object = SiriRide(
+                siri_route=siri_route,
+                journey_ref=journey_ref,
+                vehicle_ref=vehicle_ref,
+                scheduled_start_time=scheduled_start_time
             )
             if use_objectsmaker_cache:
-                self.routes_cache.setdefault(recorded_at_datestr, {}).setdefault(kwargs['operator_ref'], {})[kwargs['line_ref']] = new_object
-        elif objname == 'ride':
-            scheduled_start_time = kwargs['scheduled_start_time']
-            scheduled_start_datestr = scheduled_start_time.strftime('%Y%m%d')
-            new_object = Ride(
-                route=kwargs['route'],
-                journey_ref=kwargs['journey_ref'],
-                scheduled_start_time=kwargs['scheduled_start_time'],
-                vehicle_ref=kwargs['vehicle_ref'],
-                is_from_gtfs=False
+                key = '{}-{}-{}'.format(siri_route.id, journey_ref, vehicle_ref)
+                self.siri_rides_cache[key] = new_object
+        elif objname == 'siri_stop':
+            stop_point_ref = int(kwargs['stop_point_ref'])
+            new_object = SiriStop(
+                code=stop_point_ref
             )
             if use_objectsmaker_cache:
-                self.rides_cache.setdefault(scheduled_start_datestr, {})['{}-{}-{}'.format(kwargs['route'].id, kwargs['journey_ref'], kwargs['vehicle_ref'])] = new_object
-        elif objname == 'route_stop':
-            recorded_at_time = kwargs['recorded_at_time']
-            recorded_at_datestr = recorded_at_time.strftime('%Y%m%d')
-            new_object = RouteStop(
-                stop=kwargs['stop'],
-                route=kwargs['route'],
-                order=kwargs['order'],
-                is_from_gtfs=False
+                self.siri_stops_cache[stop_point_ref] = new_object
+        elif objname == 'siri_ride_stop':
+            siri_stop, siri_ride, order = kwargs['siri_stop'], kwargs['siri_ride'], int(kwargs['order'])
+            new_object = SiriRideStop(
+                siri_stop=siri_stop,
+                siri_ride=siri_ride,
+                order=order
             )
             if use_objectsmaker_cache:
-                self.route_stops_cache.setdefault(recorded_at_datestr, {})['{}-{}-{}'.format(kwargs['stop'].id, kwargs['route'].id, kwargs['order'])] = new_object
+                key = '{}-{}-{}'.format(siri_stop.id, siri_ride.id, order)
+                self.siri_ride_stops_cache[key] = new_object
         else:
             raise Exception('invalid objname: {}'.format(objname))
+        self.stats['num_added_{}s'.format(objname)] += 1
         session.add(new_object)
         return new_object
 
@@ -243,13 +225,12 @@ def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objec
         if config.DEBUG:
             print("Failed to parse monitored stop visit: {}".format(monitored_stop_visit))
         return None
-    route = objects_maker.get_or_create('route', session, use_objectsmaker_cache, recorded_at_time=recorded_at_time, line_ref=line_ref, operator_ref=operator_ref)
-    ride = objects_maker.get_or_create('ride', session, use_objectsmaker_cache, journey_ref=journey_ref, route=route, scheduled_start_time=scheduled_start_time, vehicle_ref=vehicle_ref)
-    stop = objects_maker.get_or_create('stop', session, use_objectsmaker_cache, recorded_at_time=recorded_at_time, stop_point_ref=stop_point_ref)
-    route_stop = objects_maker.get_or_create('route_stop', session, use_objectsmaker_cache, stop=stop, route=route, order=order, recorded_at_time=recorded_at_time)
+    siri_route = objects_maker.get_or_create('siri_route', session, use_objectsmaker_cache, line_ref=line_ref, operator_ref=operator_ref)
+    siri_ride = objects_maker.get_or_create('siri_ride', session, use_objectsmaker_cache, journey_ref=journey_ref, siri_route=siri_route, scheduled_start_time=scheduled_start_time, vehicle_ref=vehicle_ref)
+    siri_stop = objects_maker.get_or_create('siri_stop', session, use_objectsmaker_cache, stop_point_ref=stop_point_ref)
+    siri_ride_stop = objects_maker.get_or_create('siri_ride_stop', session, use_objectsmaker_cache, siri_stop=siri_stop, siri_ride=siri_ride, order=order)
     return {
-        'ride': ride,
-        'route_stop': route_stop,
+        'siri_ride_stop': siri_ride_stop,
         'recorded_at_time': recorded_at_time,
         'lon': lon,
         'lat': lat,
@@ -257,6 +238,12 @@ def parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objec
         'velocity': velocity,
         'distance_from_journey_start': distance_from_journey_start
     }
+
+
+def update_siri_snapshot_stats(siri_snapshot, stats):
+    for objname in ['siri_stop', 'siri_route', 'siri_ride', 'siri_ride_stop']:
+        stat = 'num_added_{}s'.format(objname)
+        setattr(siri_snapshot, stat, stats[stat])
 
 
 def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_data=None, objects_maker=None,
@@ -289,22 +276,16 @@ def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_dat
                     if siri_snapshot is None:
                         with logs.debug_time('get_or_create_siri_snapshot', snapshot_id=snapshot_id):
                             siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
-                    parsed_monitored_stop_visit = parse_monitored_stop_visit(session, monitored_stop_visit, snapshot_id, objects_maker, use_objectsmaker_cache)
-                    if parsed_monitored_stop_visit:
-                        num_successful_parse_vehicle_locations += 1
-                        vehicle_location = VehicleLocation(
-                            siri_snapshot=siri_snapshot,
-                            **parsed_monitored_stop_visit
-                        )
-                        with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
-                            session.add(vehicle_location)
-                    else:
-                        num_failed_parse_vehicle_locations += 1
+                    num_failed_parse_vehicle_locations, num_successful_parse_vehicle_locations = process_monitored_stop_visit(
+                        monitored_stop_visit, num_failed_parse_vehicle_locations,
+                        num_successful_parse_vehicle_locations, objects_maker, session, siri_snapshot, snapshot_id,
+                        stats, use_objectsmaker_cache
+                    )
                 if config.DEBUG:
                     for title in [
-                        'ride_get', 'ride_add', 'route_get', 'route_add',
-                        'route_stop_get', 'route_stop_add',
-                        'stop_get', 'stop_add',
+                        'siri_ride_get', 'siri_ride_add', 'siri_route_get', 'siri_route_add',
+                        'siri_ride_stop_get', 'siri_ride_stop_add',
+                        'siri_stop_get', 'siri_stop_add',
                         'vehicle_location_add'
                     ]:
                         total_seconds = stats['{}-total-seconds'.format(title)]
@@ -320,6 +301,7 @@ def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_dat
                     siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
                     siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
                     siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
+                    update_siri_snapshot_stats(siri_snapshot, stats)
                 session.commit()
                 raise
             else:
@@ -328,8 +310,35 @@ def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_dat
                 siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
                 siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
                 siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
+                update_siri_snapshot_stats(siri_snapshot, stats)
                 with logs.debug_time('session.commit', snapshot_id=snapshot_id):
                     session.commit()
+        if config.DEBUG:
+            for objname in ['siri_stop', 'siri_route', 'siri_ride', 'siri_ride_stop']:
+                key = 'num_added_{}s'.format(objname)
+                if stats[key] > 0:
+                    print('{}: {}'.format(key, stats[key]))
+            print('objects_maker size: {} bytes'.format(sys.getsizeof(objects_maker)))
+
+
+def process_monitored_stop_visit(monitored_stop_visit, num_failed_parse_vehicle_locations,
+                                 num_successful_parse_vehicle_locations, objects_maker, session, siri_snapshot,
+                                 snapshot_id, stats, use_objectsmaker_cache):
+    parsed_monitored_stop_visit = parse_monitored_stop_visit(
+        session, monitored_stop_visit, snapshot_id, objects_maker,
+        use_objectsmaker_cache
+    )
+    if parsed_monitored_stop_visit:
+        num_successful_parse_vehicle_locations += 1
+        siri_vehicle_location = SiriVehicleLocation(
+            siri_snapshot=siri_snapshot,
+            **parsed_monitored_stop_visit
+        )
+        with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
+            session.add(siri_vehicle_location)
+    else:
+        num_failed_parse_vehicle_locations += 1
+    return num_failed_parse_vehicle_locations, num_successful_parse_vehicle_locations
 
 
 @session_decorator
