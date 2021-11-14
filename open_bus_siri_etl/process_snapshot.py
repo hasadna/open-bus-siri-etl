@@ -1,8 +1,10 @@
 import os
+import subprocess
 import sys
 import json
 import time
 import datetime
+import traceback
 from collections import defaultdict
 
 import pytz
@@ -23,27 +25,6 @@ def iterate_monitored_stop_visits(snapshot_data):
     for stop_monitoring_delivery in snapshot_data['Siri']['ServiceDelivery']['StopMonitoringDelivery']:
         for monitored_stop_visit in stop_monitoring_delivery['MonitoredStopVisit']:
             yield monitored_stop_visit
-
-
-def get_or_create_siri_snapshot(session, snapshot_id, force_reload):
-    is_new_snapshot = False
-    siri_snapshot = session.query(SiriSnapshot).filter(SiriSnapshot.snapshot_id == snapshot_id).one_or_none()
-    if siri_snapshot is None:
-        is_new_snapshot = True
-        siri_snapshot = SiriSnapshot(
-            snapshot_id=snapshot_id,
-            etl_status=SiriSnapshotEtlStatusEnum.loading,
-            etl_start_time=datetime.datetime.now(pytz.UTC)
-        )
-        session.add(siri_snapshot)
-        session.commit()
-    if siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.loading and not is_new_snapshot and not force_reload:
-        raise Exception("snapshot is already in loading status (snapshot_id={})".format(snapshot_id))
-    if not is_new_snapshot:
-        siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loading
-        session.query(SiriVehicleLocation).filter(SiriVehicleLocation.siri_snapshot==siri_snapshot).delete()
-        session.commit()
-    return siri_snapshot
 
 
 def parse_timestr(timestr):
@@ -119,7 +100,7 @@ class ObjectsMaker:
     def is_cache_value_exists(self, objname, pmsv):
         return self.get_cache_value(objname, pmsv, required=False) is not None
 
-    def get_or_create_siri_routes_stops(self, session, parsed_monitored_stop_visits):
+    def get_or_create_siri_routes_stops(self, session, parsed_monitored_stop_visits, heartbeat):
         siri_route_fetch_keys = set()
         siri_stop_fetch_keys = set()
         for pmsv in parsed_monitored_stop_visits:
@@ -127,14 +108,17 @@ class ObjectsMaker:
                 siri_route_fetch_keys.add((int(pmsv['operator_ref']), int(pmsv['line_ref'])))
             if not self.is_cache_value_exists('siri_stop', pmsv):
                 siri_stop_fetch_keys.add(int(pmsv['stop_point_ref']))
+        heartbeat()
         for siri_route in session.query(SiriRoute).filter(
                 sqlalchemy.tuple_(SiriRoute.operator_ref, SiriRoute.line_ref).in_(siri_route_fetch_keys)
         ):
             self.siri_routes_cache['{}-{}'.format(siri_route.operator_ref, siri_route.line_ref)] = siri_route
+            heartbeat()
         for siri_stop in session.query(SiriStop).filter(
                 SiriStop.code.in_(siri_stop_fetch_keys)
         ):
             self.siri_stops_cache[siri_stop.code] = siri_stop
+        heartbeat()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_route', pmsv):
                 siri_route = SiriRoute(operator_ref=int(pmsv['operator_ref']), line_ref=int(pmsv['line_ref']))
@@ -146,8 +130,9 @@ class ObjectsMaker:
                 session.add(siri_stop)
                 self.set_cache_value('siri_stop', pmsv, siri_stop)
                 self.stats['num_added_siri_stops'] += 1
+            heartbeat()
 
-    def get_or_create_siri_rides(self, session, parsed_monitored_stop_visits):
+    def get_or_create_siri_rides(self, session, parsed_monitored_stop_visits, heartbeat):
         siri_ride_fetch_keys = set()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_ride', pmsv):
@@ -158,6 +143,7 @@ class ObjectsMaker:
                         pmsv['vehicle_ref']
                     )
                 )
+        heartbeat()
         for siri_ride in session.query(SiriRide).filter(
                 sqlalchemy.tuple_(SiriRide.siri_route_id, SiriRide.journey_ref, SiriRide.vehicle_ref).in_(siri_ride_fetch_keys)
         ):
@@ -166,6 +152,7 @@ class ObjectsMaker:
                 siri_ride.journey_ref,
                 siri_ride.vehicle_ref
             )] = siri_ride
+            heartbeat()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_ride', pmsv):
                 siri_ride = SiriRide(
@@ -177,8 +164,9 @@ class ObjectsMaker:
                 session.add(siri_ride)
                 self.set_cache_value('siri_ride', pmsv, siri_ride)
                 self.stats['num_added_siri_rides'] += 1
+            heartbeat()
 
-    def get_or_create_siri_ride_stops(self, session, parsed_monitored_stop_visits):
+    def get_or_create_siri_ride_stops(self, session, parsed_monitored_stop_visits, heartbeat):
         siri_ride_stop_fetch_keys = set()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_ride_stop', pmsv):
@@ -189,6 +177,7 @@ class ObjectsMaker:
                         int(pmsv['order'])
                     )
                 )
+        heartbeat()
         for siri_ride_stop in session.query(SiriRideStop).filter(
                 sqlalchemy.tuple_(
                     SiriRideStop.siri_ride_id, SiriRideStop.siri_stop_id, SiriRideStop.order
@@ -197,6 +186,7 @@ class ObjectsMaker:
             self.siri_ride_stops_cache['{}-{}-{}'.format(
                 siri_ride_stop.siri_ride_id, siri_ride_stop.siri_stop_id, siri_ride_stop.order
             )] = siri_ride_stop
+            heartbeat()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_ride_stop', pmsv):
                 siri_ride_stop = SiriRideStop(
@@ -207,11 +197,12 @@ class ObjectsMaker:
                 session.add(siri_ride_stop)
                 self.set_cache_value('siri_ride_stop', pmsv, siri_ride_stop)
                 self.stats['num_added_siri_ride_stops'] += 1
+            heartbeat()
 
-    def get_or_create_objects(self, session, parsed_monitored_stop_visits):
-        self.get_or_create_siri_routes_stops(session, parsed_monitored_stop_visits)
-        self.get_or_create_siri_rides(session, parsed_monitored_stop_visits)
-        self.get_or_create_siri_ride_stops(session, parsed_monitored_stop_visits)
+    def get_or_create_objects(self, session, parsed_monitored_stop_visits, heartbeat):
+        self.get_or_create_siri_routes_stops(session, parsed_monitored_stop_visits, heartbeat)
+        self.get_or_create_siri_rides(session, parsed_monitored_stop_visits, heartbeat)
+        self.get_or_create_siri_ride_stops(session, parsed_monitored_stop_visits, heartbeat)
 
 
 def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id):
@@ -238,89 +229,160 @@ def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id):
         return None
 
 
+def get_or_create_siri_snapshot(session, snapshot_id, force_reload):
+    created_by = ''
+    try:
+        res, out = subprocess.getstatusoutput('hostname')
+        if res == 0:
+            created_by = out
+    except:
+        traceback.print_exc()
+    is_new_snapshot = False
+    siri_snapshot = session.query(SiriSnapshot).filter(SiriSnapshot.snapshot_id == snapshot_id).one_or_none()
+    if siri_snapshot is None:
+        is_new_snapshot = True
+        siri_snapshot = SiriSnapshot(
+            snapshot_id=snapshot_id,
+            etl_status=SiriSnapshotEtlStatusEnum.loading,
+            etl_start_time=datetime.datetime.now(pytz.UTC),
+            last_heartbeat=datetime.datetime.now(pytz.UTC),
+            created_by=created_by
+        )
+        session.add(siri_snapshot)
+        session.commit()
+    if (
+        siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.loading
+        and not is_new_snapshot
+        and not force_reload
+        and siri_snapshot.last_heartbeat
+        and (datetime.datetime.now(pytz.UTC) - pytz.utc.localize(siri_snapshot.last_heartbeat)).total_seconds() < 120
+    ):
+        raise Exception("snapshot is already in loading status and last heartbeat was less then 2 minutes ago (snapshot_id={})".format(snapshot_id))
+    if not is_new_snapshot:
+        siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loading
+        siri_snapshot.last_heartbeat = datetime.datetime.now(pytz.UTC)
+        siri_snapshot.created_by = created_by
+        session.query(SiriVehicleLocation).filter(SiriVehicleLocation.siri_snapshot==siri_snapshot).delete()
+        session.commit()
+    return siri_snapshot
+
+
 def update_siri_snapshot_stats(siri_snapshot, stats):
     for objname in ['siri_stop', 'siri_route', 'siri_ride', 'siri_ride_stop']:
         stat = 'num_added_{}s'.format(objname)
         setattr(siri_snapshot, stat, stats[stat])
 
 
+def update_siri_snapshot_error(session, siri_snapshot, error_str,
+                               num_failed_parse_vehicle_locations,
+                               num_successful_parse_vehicle_locations,
+                               stats):
+    siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.error
+    siri_snapshot.error = error_str
+    siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
+    siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
+    siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
+    update_siri_snapshot_stats(siri_snapshot, stats)
+    session.commit()
+
+
+def update_siri_snapshot_loaded(session, siri_snapshot,
+                                num_failed_parse_vehicle_locations,
+                                num_successful_parse_vehicle_locations,
+                                stats):
+    siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loaded
+    siri_snapshot.error = ''
+    siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
+    siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
+    siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
+    update_siri_snapshot_stats(siri_snapshot, stats)
+    session.commit()
+
+
+def update_siri_snapshot_heartbeat(session, siri_snapshot):
+    now = datetime.datetime.now(pytz.UTC)
+    if (now - pytz.utc.localize(siri_snapshot.last_heartbeat)).total_seconds() > 5:
+        print('updating heartbeat')
+        siri_snapshot.last_heartbeat = now
+        session.commit()
+
+
 def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_data=None, objects_maker=None):
     with logs.debug_time('process_snapshot', snapshot_id=snapshot_id):
         print("Processing snapshot: {}".format(snapshot_id))
-        with get_session(session) as session:
-            if objects_maker is None:
-                objects_maker = ObjectsMaker()
-            if snapshot_data is None:
-                snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
-            monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
-            if os.path.exists(monitored_stop_visit_parse_errors_filename):
-                os.unlink(monitored_stop_visit_parse_errors_filename)
-            else:
-                os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
-            error, monitored_stop_visit, siri_snapshot, is_new_snapshot = None, None, None, None
-            num_failed_parse_vehicle_locations = 0
-            stats = objects_maker.stats = defaultdict(int)
-            try:
-                parsed_monitored_stop_visits = []
+        with get_session() as siri_snapshot_session:
+            with get_session(session) as session:
+                if objects_maker is None:
+                    objects_maker = ObjectsMaker()
+                if snapshot_data is None:
+                    snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
+                monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
+                if os.path.exists(monitored_stop_visit_parse_errors_filename):
+                    os.unlink(monitored_stop_visit_parse_errors_filename)
+                else:
+                    os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
+                error, monitored_stop_visit, is_new_snapshot = None, None, None
                 num_failed_parse_vehicle_locations = 0
-                with logs.debug_time('parse_monitored_stop_visits', snapshot_id=snapshot_id):
-                    for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
-                        parsed_monitored_stop_visit = parse_monitored_stop_visit(monitored_stop_visit, snapshot_id)
-                        if parsed_monitored_stop_visit:
-                            parsed_monitored_stop_visits.append(parsed_monitored_stop_visit)
-                        else:
-                            num_failed_parse_vehicle_locations += 1
-                if siri_snapshot is None:
-                    with logs.debug_time('get_or_create_siri_snapshot', snapshot_id=snapshot_id):
-                        siri_snapshot = get_or_create_siri_snapshot(session, snapshot_id, force_reload)
-                with logs.debug_time('objects_maker_get_or_create_objects', snapshot_id=snapshot_id):
-                    objects_maker.get_or_create_objects(session, parsed_monitored_stop_visits)
-                with logs.debug_time('process_monitored_stop_visits', snapshot_id=snapshot_id):
-                    for pmsv in parsed_monitored_stop_visits:
-                        siri_vehicle_location = SiriVehicleLocation(
-                            siri_snapshot=siri_snapshot,
-                            siri_ride_stop=objects_maker.get_cache_value('siri_ride_stop', pmsv),
-                            recorded_at_time=pmsv['recorded_at_time'],
-                            lon=pmsv['lon'],
-                            lat=pmsv['lat'],
-                            bearing=pmsv['bearing'],
-                            velocity=pmsv['velocity'],
-                            distance_from_journey_start=pmsv['distance_from_journey_start']
-                        )
-                        with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
-                            session.add(siri_vehicle_location)
-                if config.DEBUG:
-                    for title in [
-                        'siri_ride_get', 'siri_ride_add', 'siri_route_get', 'siri_route_add',
-                        'siri_ride_stop_get', 'siri_ride_stop_add',
-                        'siri_stop_get', 'siri_stop_add',
-                        'vehicle_location_add'
-                    ]:
-                        total_seconds = stats['{}-total-seconds'.format(title)]
-                        total_calls = stats['{}-total-calls'.format(title)]
-                        if total_calls > 0:
-                            print('avg. {} call seconds: {} ({} / {})'.format(title, total_seconds / total_calls, total_seconds, total_calls))
-            except Exception as e:
-                print("Unexpected exception processing monitored_stop_visit {}".format(monitored_stop_visit))
-                session.rollback()
-                if siri_snapshot:
-                    siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.error
-                    siri_snapshot.error = str(e)
-                    siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
-                    siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
-                    siri_snapshot.num_successful_parse_vehicle_locations = len(parsed_monitored_stop_visits)
-                    update_siri_snapshot_stats(siri_snapshot, stats)
-                session.commit()
-                raise
-            else:
-                siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loaded
-                siri_snapshot.error = ''
-                siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
-                siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
-                siri_snapshot.num_successful_parse_vehicle_locations = len(parsed_monitored_stop_visits)
-                update_siri_snapshot_stats(siri_snapshot, stats)
-                with logs.debug_time('session.commit', snapshot_id=snapshot_id):
-                    session.commit()
+                stats = objects_maker.stats = defaultdict(int)
+                with logs.debug_time('get_or_create_siri_snapshot', snapshot_id=snapshot_id):
+                    siri_snapshot = get_or_create_siri_snapshot(siri_snapshot_session, snapshot_id, force_reload)
+
+                def heartbeat():
+                    update_siri_snapshot_heartbeat(siri_snapshot_session, siri_snapshot)
+
+                try:
+                    parsed_monitored_stop_visits = []
+                    num_failed_parse_vehicle_locations = 0
+                    with logs.debug_time('parse_monitored_stop_visits', snapshot_id=snapshot_id):
+                        for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
+                            parsed_monitored_stop_visit = parse_monitored_stop_visit(monitored_stop_visit, snapshot_id)
+                            if parsed_monitored_stop_visit:
+                                parsed_monitored_stop_visits.append(parsed_monitored_stop_visit)
+                            else:
+                                num_failed_parse_vehicle_locations += 1
+                            heartbeat()
+                    with logs.debug_time('objects_maker_get_or_create_objects', snapshot_id=snapshot_id):
+                        objects_maker.get_or_create_objects(session, parsed_monitored_stop_visits, heartbeat)
+                    with logs.debug_time('process_monitored_stop_visits', snapshot_id=snapshot_id):
+                        for pmsv in parsed_monitored_stop_visits:
+                            siri_vehicle_location = SiriVehicleLocation(
+                                siri_snapshot_id=siri_snapshot.id,
+                                siri_ride_stop=objects_maker.get_cache_value('siri_ride_stop', pmsv),
+                                recorded_at_time=pmsv['recorded_at_time'],
+                                lon=pmsv['lon'],
+                                lat=pmsv['lat'],
+                                bearing=pmsv['bearing'],
+                                velocity=pmsv['velocity'],
+                                distance_from_journey_start=pmsv['distance_from_journey_start']
+                            )
+                            with logs.debug_time_stats('vehicle_location_add', stats, log_if_more_then_seconds=1):
+                                session.add(siri_vehicle_location)
+                            heartbeat()
+                    if config.DEBUG:
+                        for title in [
+                            'siri_ride_get', 'siri_ride_add', 'siri_route_get', 'siri_route_add',
+                            'siri_ride_stop_get', 'siri_ride_stop_add',
+                            'siri_stop_get', 'siri_stop_add',
+                            'vehicle_location_add'
+                        ]:
+                            total_seconds = stats['{}-total-seconds'.format(title)]
+                            total_calls = stats['{}-total-calls'.format(title)]
+                            if total_calls > 0:
+                                print('avg. {} call seconds: {} ({} / {})'.format(title, total_seconds / total_calls, total_seconds, total_calls))
+                    with logs.debug_time('session.commit', snapshot_id=snapshot_id):
+                        session.commit()
+                except Exception:
+                    print("Unexpected exception processing monitored_stop_visit {}".format(monitored_stop_visit))
+                    update_siri_snapshot_error(siri_snapshot_session, siri_snapshot, traceback.format_exc(),
+                                               num_failed_parse_vehicle_locations,
+                                               len(parsed_monitored_stop_visits),
+                                               stats)
+                    raise
+                else:
+                    update_siri_snapshot_loaded(siri_snapshot_session, siri_snapshot,
+                                                num_failed_parse_vehicle_locations,
+                                                len(parsed_monitored_stop_visits),
+                                                stats)
         if config.DEBUG:
             for objname in ['siri_stop', 'siri_route', 'siri_ride', 'siri_ride_stop']:
                 key = 'num_added_{}s'.format(objname)
