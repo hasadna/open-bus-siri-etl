@@ -260,8 +260,13 @@ def get_or_create_siri_snapshot(session, snapshot_id, force_reload):
         raise Exception("snapshot is already in loading status and last heartbeat was less then 2 minutes ago (snapshot_id={})".format(snapshot_id))
     if not is_new_snapshot:
         siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loading
+        siri_snapshot.etl_start_time = datetime.datetime.now(pytz.UTC)
         siri_snapshot.last_heartbeat = datetime.datetime.now(pytz.UTC)
         siri_snapshot.created_by = created_by
+        for attr in ['error', 'num_successful_parse_vehicle_locations', 'num_failed_parse_vehicle_locations',
+                     'num_added_siri_rides', 'num_added_siri_ride_stops', 'num_added_siri_routes',
+                     'num_added_siri_stops']:
+            setattr(siri_snapshot, attr, None)
         session.query(SiriVehicleLocation).filter(SiriVehicleLocation.siri_snapshot==siri_snapshot).delete()
         session.commit()
     return siri_snapshot
