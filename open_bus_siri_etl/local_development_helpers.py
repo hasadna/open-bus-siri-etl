@@ -8,11 +8,9 @@ import open_bus_siri_requester.config
 
 
 REMOTE_URL = 'https://open-bus-siri-requester.hasadna.org.il'
-REMOTE_URL_HTTPAUTH = os.environ.get('REMOTE_URL_HTTPAUTH')
 
 
 def download_latest_snapshots():
-    assert REMOTE_URL_HTTPAUTH, 'missing REMOTE_URL_HTTPAUTH env var, it should be in the format username:password'
     now = datetime.datetime.now(pytz.UTC)
     for i in reversed(range(1, 120)):
         snapshot_id = (now - datetime.timedelta(minutes=i)).strftime('%Y/%m/%d/%H/%M')
@@ -20,7 +18,6 @@ def download_latest_snapshots():
 
 
 def download_snapshot(snapshot_id):
-    assert REMOTE_URL_HTTPAUTH, 'missing REMOTE_URL_HTTPAUTH env var, it should be in the format username:password'
     filename = '{}.br'.format(snapshot_id)
     url = '{}/{}'.format(REMOTE_URL, filename)
     filepath = os.path.join(open_bus_siri_requester.config.OPEN_BUS_SIRI_STORAGE_ROOTPATH, filename)
@@ -28,6 +25,6 @@ def download_snapshot(snapshot_id):
     with open(filepath, 'wb') as f:
         try:
             print("Downloading {} -> {}".format(url, filepath))
-            f.write(requests.get(url, auth=tuple(REMOTE_URL_HTTPAUTH.split(':'))).content)
+            f.write(requests.get(url).content)
         except:
             print("Failed to download {}".format(filename))
