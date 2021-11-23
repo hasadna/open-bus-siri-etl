@@ -2,6 +2,8 @@
 
 ETL processing of SIRI real-time snapshots
 
+See [our contributing docs](https://github.com/hasadna/open-bus-pipelines/blob/main/CONTRIBUTING.md) if you want to suggest changes to this repository.
+
 ## Required environment variables
 
 * `REMOTE_URL_HTTPAUTH`: http auth to download siri snapshots (format: `username:password`)
