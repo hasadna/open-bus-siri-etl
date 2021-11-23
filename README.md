@@ -4,10 +4,6 @@ ETL processing of SIRI real-time snapshots
 
 See [our contributing docs](https://github.com/hasadna/open-bus-pipelines/blob/main/CONTRIBUTING.md) if you want to suggest changes to this repository.
 
-## Required environment variables
-
-* `REMOTE_URL_HTTPAUTH`: http auth to download siri snapshots (format: `username:password`)
-
 ## Development using the Docker Compose environment
 
 This is the easiest option to start development, follow these instructions: https://github.com/hasadna/open-bus-pipelines/blob/main/README.md#siri-etl
@@ -52,12 +48,6 @@ pip install -r requirements-dev.txt
 ```
 
 Create a `.env` file and set the following in the file:
-
-Get the values for the remote url from another project member:
-
-```
-export REMOTE_URL_HTTPAUTH=username:password
-```
 
 The sql alchemy url should be as follows (it's only used locally):
 
