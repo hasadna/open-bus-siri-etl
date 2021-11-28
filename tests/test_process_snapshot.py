@@ -80,7 +80,7 @@ def assert_first_vehicle_location(vehicle_location, date=None, time=None, with_a
         date = datetime.date(2019, 5, 5)
     if not time:
         time = datetime.time(16, 0)
-    assert vehicle_location.recorded_at_time == datetime.datetime(date.year, date.month, date.day, time.hour-3, time.minute, 15, 0)
+    assert vehicle_location.recorded_at_time == pytz.timezone('israel').localize(datetime.datetime(date.year, date.month, date.day, time.hour, time.minute, 15, 0))
     assert vehicle_location.lon, vehicle_location.lat == (34.749191, 31.874036)
     assert vehicle_location.bearing, vehicle_location.velocity == (186, 50)
     assert vehicle_location.distance_from_journey_start == 4903
@@ -93,7 +93,7 @@ def assert_first_vehicle_location(vehicle_location, date=None, time=None, with_a
 
     siri_ride = siri_ride_stop.siri_ride
     assert siri_ride.journey_ref == '2019-05-05-56644704'
-    assert siri_ride.scheduled_start_time == datetime.datetime(date.year, date.month, date.day, 12, 45, 00, 0)
+    assert siri_ride.scheduled_start_time == pytz.utc.localize(datetime.datetime(date.year, date.month, date.day, 12, 45, 00, 0))
     assert siri_ride.vehicle_ref == '8245384'
 
     siri_route = siri_ride.siri_route
@@ -109,8 +109,8 @@ def assert_test_siri_snapshot(session, snapshot_id=TEST_SNAPSHOT_ID, first_vehic
     siri_snapshot = session.query(SiriSnapshot).filter(SiriSnapshot.snapshot_id == snapshot_id).one()
     assert siri_snapshot.snapshot_id == snapshot_id
     assert siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.loaded
-    assert pytz.UTC.localize(siri_snapshot.etl_start_time) >= datetime.datetime.now(pytz.UTC) - datetime.timedelta(minutes=5)
-    assert pytz.UTC.localize(siri_snapshot.etl_end_time) <= datetime.datetime.now(pytz.UTC) + datetime.timedelta(minutes=5)
+    assert siri_snapshot.etl_start_time >= datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
+    assert siri_snapshot.etl_end_time <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
     assert siri_snapshot.error == ''
     assert siri_snapshot.num_successful_parse_vehicle_locations == 3
     assert siri_snapshot.num_failed_parse_vehicle_locations == 2
@@ -143,7 +143,7 @@ def test_process_snapshot_existing_objects(session):
     siri_route = SiriRoute(line_ref=1, operator_ref=25)
     session.add(siri_route)
     siri_ride = SiriRide(siri_route=siri_route, journey_ref='2019-05-05-56644704',
-                scheduled_start_time=datetime.datetime(2019, 5, 5, 12, 45, 00, 0, tzinfo=pytz.UTC),
+                scheduled_start_time=datetime.datetime(2019, 5, 5, 12, 45, 00, 0, tzinfo=datetime.timezone.utc),
                 vehicle_ref='8245384')
     session.add(siri_ride)
     siri_ride_stop = SiriRideStop(siri_ride=siri_ride, siri_stop=siri_stop, order=13)
@@ -179,12 +179,12 @@ def test_process_new_snapshots(session):
         stats = process_new_snapshots(last_snapshots_timedelta=dict(minutes=10))
         assert (stats['processed'], stats['attempted']) == (0, 11)
         # 1 snapshot available in storage from last snapshots
-        open_bus_siri_requester.storage.store(TEST_SNAPSHOT_DATA, datetime.datetime(2019, 5, 5, 16, 0, tzinfo=pytz.UTC))
-        stats = process_new_snapshots(last_snapshots_timedelta=dict(minutes=10), now=datetime.datetime(2019, 5, 5, 16, 5, tzinfo=pytz.UTC))
+        open_bus_siri_requester.storage.store(TEST_SNAPSHOT_DATA, datetime.datetime(2019, 5, 5, 16, 0, tzinfo=datetime.timezone.utc))
+        stats = process_new_snapshots(last_snapshots_timedelta=dict(minutes=10), now=datetime.datetime(2019, 5, 5, 16, 5, tzinfo=datetime.timezone.utc))
         assert (stats['processed'], stats['attempted']) == (1, 11)
         assert_test_siri_snapshot(session)
         # last snapshot is in DB, so next snapshot in storage will be processed (previous stored snapshot won't be processed)
-        open_bus_siri_requester.storage.store(get_test_snapshot_data(time=datetime.time(16, 6)), datetime.datetime(2019, 5, 5, 16, 6, tzinfo=pytz.UTC))
-        stats = process_new_snapshots(last_snapshots_timedelta=dict(minutes=10), now=datetime.datetime(2019, 5, 5, 16, 7, tzinfo=pytz.UTC))
+        open_bus_siri_requester.storage.store(get_test_snapshot_data(time=datetime.time(16, 6)), datetime.datetime(2019, 5, 5, 16, 6, tzinfo=datetime.timezone.utc))
+        stats = process_new_snapshots(last_snapshots_timedelta=dict(minutes=10), now=datetime.datetime(2019, 5, 5, 16, 7, tzinfo=datetime.timezone.utc))
         assert (stats['processed'], stats['attempted']) == (1, 7)
         assert_test_siri_snapshot(session, snapshot_id='2019/05/05/16/06', first_vehicle_location_time=datetime.time(16, 6), first_vehicle_location_with_assert_ids=False)

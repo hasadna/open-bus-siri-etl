@@ -1,17 +1,18 @@
 import os
 import datetime
 
-import pytz
 import requests
 
 import open_bus_siri_requester.config
+
+from . import common
 
 
 REMOTE_URL = 'https://open-bus-siri-requester.hasadna.org.il'
 
 
 def download_latest_snapshots():
-    now = datetime.datetime.now(pytz.UTC)
+    now = common.now()
     for i in reversed(range(1, 120)):
         snapshot_id = (now - datetime.timedelta(minutes=i)).strftime('%Y/%m/%d/%H/%M')
         download_snapshot(snapshot_id)

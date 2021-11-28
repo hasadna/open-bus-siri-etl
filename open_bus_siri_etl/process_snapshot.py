@@ -19,6 +19,7 @@ import open_bus_siri_requester.storage
 from .graceful_killer import GracefulKiller
 from . import config
 from . import logs
+from . import common
 
 
 def iterate_monitored_stop_visits(snapshot_data):
@@ -28,7 +29,7 @@ def iterate_monitored_stop_visits(snapshot_data):
 
 
 def parse_timestr(timestr):
-    return datetime.datetime.strptime(timestr.replace(':', ''), '%Y-%m-%dT%H%M%S%z').astimezone(pytz.UTC)
+    return datetime.datetime.strptime(timestr, '%Y-%m-%dT%H:%M:%S%z')
 
 
 def get_monitored_stop_visit_parse_errors_filename(snapshot_id):
@@ -244,8 +245,8 @@ def get_or_create_siri_snapshot(session, snapshot_id, force_reload):
         siri_snapshot = SiriSnapshot(
             snapshot_id=snapshot_id,
             etl_status=SiriSnapshotEtlStatusEnum.loading,
-            etl_start_time=datetime.datetime.now(pytz.UTC),
-            last_heartbeat=datetime.datetime.now(pytz.UTC),
+            etl_start_time=common.now(),
+            last_heartbeat=common.now(),
             created_by=created_by
         )
         session.add(siri_snapshot)
@@ -255,13 +256,13 @@ def get_or_create_siri_snapshot(session, snapshot_id, force_reload):
         and not is_new_snapshot
         and not force_reload
         and siri_snapshot.last_heartbeat
-        and (datetime.datetime.now(pytz.UTC) - pytz.utc.localize(siri_snapshot.last_heartbeat)).total_seconds() < 120
+        and (common.now() - siri_snapshot.last_heartbeat).total_seconds() < 120
     ):
         raise Exception("snapshot is already in loading status and last heartbeat was less then 2 minutes ago (snapshot_id={})".format(snapshot_id))
     if not is_new_snapshot:
         siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loading
-        siri_snapshot.etl_start_time = datetime.datetime.now(pytz.UTC)
-        siri_snapshot.last_heartbeat = datetime.datetime.now(pytz.UTC)
+        siri_snapshot.etl_start_time = common.now()
+        siri_snapshot.last_heartbeat = common.now()
         siri_snapshot.created_by = created_by
         for attr in ['error', 'num_successful_parse_vehicle_locations', 'num_failed_parse_vehicle_locations',
                      'num_added_siri_rides', 'num_added_siri_ride_stops', 'num_added_siri_routes',
@@ -284,7 +285,7 @@ def update_siri_snapshot_error(session, siri_snapshot, error_str,
                                stats):
     siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.error
     siri_snapshot.error = error_str
-    siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
+    siri_snapshot.etl_end_time = datetime.datetime.now(datetime.timezone.utc)
     siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
     siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
     update_siri_snapshot_stats(siri_snapshot, stats)
@@ -297,7 +298,7 @@ def update_siri_snapshot_loaded(session, siri_snapshot,
                                 stats):
     siri_snapshot.etl_status = SiriSnapshotEtlStatusEnum.loaded
     siri_snapshot.error = ''
-    siri_snapshot.etl_end_time = datetime.datetime.now(pytz.UTC)
+    siri_snapshot.etl_end_time = datetime.datetime.now(datetime.timezone.utc)
     siri_snapshot.num_failed_parse_vehicle_locations = num_failed_parse_vehicle_locations
     siri_snapshot.num_successful_parse_vehicle_locations = num_successful_parse_vehicle_locations
     update_siri_snapshot_stats(siri_snapshot, stats)
@@ -305,8 +306,8 @@ def update_siri_snapshot_loaded(session, siri_snapshot,
 
 
 def update_siri_snapshot_heartbeat(session, siri_snapshot):
-    now = datetime.datetime.now(pytz.UTC)
-    if (now - pytz.utc.localize(siri_snapshot.last_heartbeat)).total_seconds() > 5:
+    now = common.now()
+    if (now - siri_snapshot.last_heartbeat).total_seconds() > 5:
         print('updating heartbeat')
         siri_snapshot.last_heartbeat = now
         session.commit()
@@ -403,7 +404,7 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
     if not last_snapshots_timedelta:
         last_snapshots_timedelta = dict(days=7)
     if not now:
-        now = datetime.datetime.now(pytz.UTC)
+        now = datetime.datetime.now(datetime.timezone.utc)
     last_loaded_snapshot = session.query(SiriSnapshot)\
         .filter(SiriSnapshot.etl_status == SiriSnapshotEtlStatusEnum.loaded)\
         .order_by(sqlalchemy.desc(SiriSnapshot.snapshot_id))\
@@ -437,7 +438,7 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
 def start_process_new_snapshots_daemon():
     graceful_killer = GracefulKiller()
     while not graceful_killer.kill_now:
-        start_time = datetime.datetime.now(pytz.UTC)
+        start_time = datetime.datetime.now(datetime.timezone.utc)
         stats = process_new_snapshots(graceful_killer=graceful_killer)
         if stats['processed'] > 0:
             print('processed {} snapshots (attempted {})'.format(stats['processed'], stats['attempted']))
@@ -445,7 +446,7 @@ def start_process_new_snapshots_daemon():
             print('attempted {} snapshots'.format(stats['attempted']))
         if graceful_killer.kill_now:
             break
-        elapsed_seconds = (datetime.datetime.now(pytz.UTC) - start_time).total_seconds()
+        elapsed_seconds = (datetime.datetime.now(datetime.timezone.utc) - start_time).total_seconds()
         if elapsed_seconds < 60:
             time.sleep(60 - elapsed_seconds)
         else:
