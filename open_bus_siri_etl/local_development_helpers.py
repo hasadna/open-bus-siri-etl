@@ -8,7 +8,7 @@ import open_bus_siri_requester.config
 from . import common
 
 
-REMOTE_URL = 'https://open-bus-siri-requester.hasadna.org.il'
+REMOTE_URL = 'https://openbus-stride-public.s3.eu-west-1.amazonaws.com/stride-siri-requester'
 
 
 def download_latest_snapshots():

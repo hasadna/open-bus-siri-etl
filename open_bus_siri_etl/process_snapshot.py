@@ -33,6 +33,7 @@ def parse_timestr(timestr):
 
 
 def get_monitored_stop_visit_parse_errors_filename(snapshot_id):
+    # this path is periodically cleared and backed-up by open-bus-stride-etl siri backup-cleanup task
     return os.path.join(config.OPEN_BUS_SIRI_ETL_ROOTPATH, 'monitored_stop_visits_parse_failed', snapshot_id, 'jsonlines')
 
 
