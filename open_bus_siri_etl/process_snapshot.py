@@ -322,7 +322,9 @@ def download_snapshot_data(snapshot_id):
             try:
                 if config.DEBUG:
                     print("Downloading {}".format(url))
-                f.write(requests.get(url).content)
+                res = requests.get(url)
+                res.raise_for_status()
+                f.write(res.content)
             except:
                 print("Failed to download {}".format(url))
                 return None
