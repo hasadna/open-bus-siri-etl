@@ -138,13 +138,9 @@ class ObjectsMaker:
         siri_ride_fetch_keys = set()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_ride', pmsv):
-                siri_ride_fetch_keys.add(
-                    (
-                        self.get_cache_value('siri_route', pmsv).id,
-                        pmsv['journey_ref'],
-                        pmsv['vehicle_ref']
-                    )
-                )
+                siri_route = self.get_cache_value('siri_route', pmsv)
+                assert siri_route.id
+                siri_ride_fetch_keys.add((siri_route.id, pmsv['journey_ref'], pmsv['vehicle_ref']))
         heartbeat()
         for siri_ride in session.query(SiriRide).filter(
                 sqlalchemy.tuple_(SiriRide.siri_route_id, SiriRide.journey_ref, SiriRide.vehicle_ref).in_(siri_ride_fetch_keys)
@@ -172,13 +168,10 @@ class ObjectsMaker:
         siri_ride_stop_fetch_keys = set()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_ride_stop', pmsv):
-                siri_ride_stop_fetch_keys.add(
-                    (
-                        self.get_cache_value('siri_ride', pmsv).id,
-                        self.get_cache_value('siri_stop', pmsv).id,
-                        int(pmsv['order'])
-                    )
-                )
+                siri_ride = self.get_cache_value('siri_ride', pmsv)
+                siri_stop = self.get_cache_value('siri_stop', pmsv)
+                assert siri_ride.id and siri_stop.id
+                siri_ride_stop_fetch_keys.add((siri_ride.id, siri_stop.id, int(pmsv['order'])))
         heartbeat()
         for siri_ride_stop in session.query(SiriRideStop).filter(
                 sqlalchemy.tuple_(
@@ -203,8 +196,11 @@ class ObjectsMaker:
 
     def get_or_create_objects(self, session, parsed_monitored_stop_visits, heartbeat):
         self.get_or_create_siri_routes_stops(session, parsed_monitored_stop_visits, heartbeat)
+        session.commit()
         self.get_or_create_siri_rides(session, parsed_monitored_stop_visits, heartbeat)
+        session.commit()
         self.get_or_create_siri_ride_stops(session, parsed_monitored_stop_visits, heartbeat)
+        session.commit()
 
 
 def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id):

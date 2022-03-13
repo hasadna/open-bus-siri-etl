@@ -45,3 +45,7 @@ def process_new_snapshots(limit):
 @main.command()
 def start_process_new_snapshots_daemon():
     open_bus_siri_etl.process_snapshot.start_process_new_snapshots_daemon()
+
+
+if __name__ == '__main__':
+    main()
