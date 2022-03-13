@@ -399,7 +399,7 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
     if limit:
         limit = int(limit)
     if not last_snapshots_timedelta:
-        last_snapshots_timedelta = dict(days=7)
+        last_snapshots_timedelta = dict(minutes=10)
     if not now:
         now = datetime.datetime.now(datetime.timezone.utc)
     last_loaded_snapshot = session.query(SiriSnapshot)\
