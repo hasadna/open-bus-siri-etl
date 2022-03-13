@@ -1,6 +1,7 @@
 import os
 import json
 import datetime
+import shutil
 import tempfile
 from copy import deepcopy
 
@@ -128,7 +129,9 @@ def assert_test_siri_snapshot(session, snapshot_id=TEST_SNAPSHOT_ID, first_vehic
 def process_test_siri_snapshot(session, skip_clear=False, force_reload=False):
     if not skip_clear:
         common.clear_siri_data(session)
-    process_snapshot(session=session, snapshot_id=TEST_SNAPSHOT_ID, snapshot_data=TEST_SNAPSHOT_DATA, force_reload=force_reload)
+    shutil.rmtree(os.path.join(OPEN_BUS_SIRI_ETL_ROOTPATH, 'monitored_stop_visits_parse_failed'), ignore_errors=True)
+    process_snapshot(session=session, snapshot_id=TEST_SNAPSHOT_ID, snapshot_data=TEST_SNAPSHOT_DATA,
+                     force_reload=force_reload, save_parse_errors=True)
     return assert_test_siri_snapshot(session)
 
 
