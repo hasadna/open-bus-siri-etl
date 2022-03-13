@@ -3,6 +3,7 @@ import datetime
 import click
 
 import open_bus_siri_etl.process_snapshot
+import open_bus_siri_etl.validate_snapshots
 from open_bus_siri_etl import local_development_helpers
 
 
@@ -51,6 +52,13 @@ def process_new_snapshots(limit):
 @main.command()
 def start_process_new_snapshots_daemon():
     open_bus_siri_etl.process_snapshot.start_process_new_snapshots_daemon()
+
+
+@main.command()
+@click.argument('SNAPSHOT_ID_FROM')
+@click.argument('SNAPSHOT_ID_TO')
+def validate_snapshots(**kwargs):
+    open_bus_siri_etl.validate_snapshots.main(**kwargs)
 
 
 if __name__ == '__main__':

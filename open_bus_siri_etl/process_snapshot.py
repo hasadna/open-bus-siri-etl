@@ -206,7 +206,7 @@ class ObjectsMaker:
         session.commit()
 
 
-def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id, save_parse_errors=False):
+def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id=None, save_parse_errors=False):
     try:
         return dict(
             recorded_at_time=parse_timestr(monitored_stop_visit['RecordedAtTime']),
@@ -225,6 +225,7 @@ def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id, save_parse_err
         )
     except:
         if save_parse_errors:
+            assert snapshot_id
             save_monitored_stop_visit_parse_error(monitored_stop_visit, snapshot_id)
         if config.DEBUG:
             print("Failed to parse monitored stop visit: {}".format(monitored_stop_visit))

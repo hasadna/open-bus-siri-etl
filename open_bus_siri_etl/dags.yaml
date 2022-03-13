@@ -16,6 +16,7 @@
           snapshot_id: {}
           force_reload: {default: true}
           download: {default: true}
+
 - name: siri-etl-process-snapshots
   description: |
     Process a range of snapshots and load them to DB.
@@ -36,3 +37,20 @@
           snapshot_id_to: {}
           force_reload: {default: true}
           download: {default: true}
+
+- name: siri-etl-validate-snapshots
+  description: |
+    Validate a range of snapshots and generate a report with validation errors.
+    {
+        "snapshot_id_from": "2021/07/05/12/50",
+        "snapshot_id_to": "2021/07/05/12/55"
+    }
+  tasks:
+    - id: validate-snapshots
+      config:
+        type: api
+        module: open_bus_siri_etl.validate_snapshot
+        function: main
+        kwargs:
+          snapshot_id_from: {}
+          snapshot_id_to: {}
