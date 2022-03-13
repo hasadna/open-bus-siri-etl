@@ -22,14 +22,14 @@
     {
         "snapshot_id_from": "2021/07/05/12/50",
         "snapshot_id_to": "2021/07/05/12/55",
-        "force_reload": false,
-        "download": false
+        "force_reload": true,
+        "download": true
     }
   tasks:
     - id: process-snapshots
       config:
         type: api
-        module: open_bus_siri_etl.process_snapshots
+        module: open_bus_siri_etl.process_snapshot
         function: process_snapshots
         kwargs:
           snapshot_id_from: {}
