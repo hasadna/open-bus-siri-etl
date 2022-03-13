@@ -3,7 +3,8 @@
     Process a single snapshot and load it to DB.
     {
         "snapshot_id": "2021/07/05/12/50",
-        "force_reload": false
+        "force_reload": true,
+        "download": true
     }
   tasks:
     - id: process-snapshot
@@ -13,4 +14,25 @@
         function: process_snapshot
         kwargs:
           snapshot_id: {}
-          force_reload: {default: false}
+          force_reload: {default: true}
+          download: {default: true}
+- name: siri-etl-process-snapshots
+  description: |
+    Process a range of snapshots and load them to DB.
+    {
+        "snapshot_id_from": "2021/07/05/12/50",
+        "snapshot_id_to": "2021/07/05/12/55",
+        "force_reload": false,
+        "download": false
+    }
+  tasks:
+    - id: process-snapshots
+      config:
+        type: api
+        module: open_bus_siri_etl.process_snapshots
+        function: process_snapshots
+        kwargs:
+          snapshot_id_from: {}
+          snapshot_id_to: {}
+          force_reload: {default: true}
+          download: {default: true}

@@ -1,16 +1,17 @@
 import os
-import subprocess
 import sys
 import json
 import time
+import tempfile
 import datetime
 import traceback
+import subprocess
 from collections import defaultdict
 
-import pytz
+import requests
 import sqlalchemy
 
-from open_bus_stride_db.db import session_decorator, get_session, Session
+from open_bus_stride_db.db import session_decorator, get_session
 from open_bus_stride_db.model import (
     SiriSnapshot, SiriSnapshotEtlStatusEnum,
     SiriVehicleLocation, SiriRide, SiriRideStop, SiriRoute, SiriStop
@@ -203,7 +204,7 @@ class ObjectsMaker:
         session.commit()
 
 
-def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id):
+def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id, save_parse_errors=False):
     try:
         return dict(
             recorded_at_time=parse_timestr(monitored_stop_visit['RecordedAtTime']),
@@ -221,7 +222,8 @@ def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id):
             distance_from_journey_start=int(monitored_stop_visit['MonitoredVehicleJourney']['MonitoredCall'].get('DistanceFromStop', -1)),
         )
     except:
-        save_monitored_stop_visit_parse_error(monitored_stop_visit, snapshot_id)
+        if save_parse_errors:
+            save_monitored_stop_visit_parse_error(monitored_stop_visit, snapshot_id)
         if config.DEBUG:
             print("Failed to parse monitored stop visit: {}".format(monitored_stop_visit))
         return None
@@ -305,25 +307,75 @@ def update_siri_snapshot_loaded(session, siri_snapshot,
 def update_siri_snapshot_heartbeat(session, siri_snapshot):
     now = common.now()
     if (now - siri_snapshot.last_heartbeat).total_seconds() > 5:
-        print('updating heartbeat')
+        if config.DEBUG:
+            print('updating heartbeat')
         siri_snapshot.last_heartbeat = now
         session.commit()
 
 
-def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_data=None, objects_maker=None):
-    with logs.debug_time('process_snapshot', snapshot_id=snapshot_id):
+def download_snapshot_data(snapshot_id):
+    filename = '{}.br'.format(snapshot_id)
+    url = '{}/{}'.format(config.SNAPSHOT_DOWNLOAD_REMOTE_URL, filename)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = os.path.join(tmpdir, 'file.br')
+        with open(filepath, 'wb') as f:
+            try:
+                if config.DEBUG:
+                    print("Downloading {}".format(url))
+                f.write(requests.get(url).content)
+            except:
+                print("Failed to download {}".format(url))
+                return None
+        ret, out = subprocess.getstatusoutput('cat {} | brotli -d'.format(filepath))
+        assert ret == 0, out
+        return json.loads(out)
+
+
+def get_snapshot_data(snapshot_id, download=False):
+    if download:
+        return download_snapshot_data(snapshot_id)
+    else:
+        return open_bus_siri_requester.storage.read(snapshot_id)
+
+
+def process_snapshots(snapshot_id_from, snapshot_id_to, force_reload=False, download=False):
+    dt = datetime.datetime.strptime(snapshot_id_from, '%Y/%m/%d/%H/%M')
+    dt_to = datetime.datetime.strptime(snapshot_id_to, '%Y/%m/%d/%H/%M')
+    assert snapshot_id_from < snapshot_id_to
+    stats = defaultdict(int)
+    with get_session() as session:
+        objects_maker = ObjectsMaker()
+        while dt <= dt_to:
+            snapshot_id = dt.strftime('%Y/%m/%d/%H/%M')
+            snapshot_data = get_snapshot_data(snapshot_id, download=download)
+            if snapshot_data:
+                process_snapshot(snapshot_id, force_reload=force_reload, download=download,
+                                 objects_maker=objects_maker, snapshot_data=snapshot_data,
+                                 session=session)
+                stats['processed snapshots'] += 1
+            else:
+                stats['missing snapshots'] += 1
+            dt = dt + datetime.timedelta(minutes=1)
+    print(dict(stats))
+
+
+def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_data=None,
+                     objects_maker=None, save_parse_errors=False, download=False):
+    with logs.debug_time('process_snapshot', snapshot_id=snapshot_id, force_reload=force_reload,
+                         save_parse_errors=save_parse_errors, download=download):
         print("Processing snapshot: {}".format(snapshot_id))
         with get_session() as siri_snapshot_session:
             with get_session(session) as session:
                 if objects_maker is None:
                     objects_maker = ObjectsMaker()
                 if snapshot_data is None:
-                    snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
-                monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
-                if os.path.exists(monitored_stop_visit_parse_errors_filename):
-                    os.unlink(monitored_stop_visit_parse_errors_filename)
-                else:
-                    os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
+                    snapshot_data = get_snapshot_data(snapshot_id, download=download)
+                if save_parse_errors:
+                    monitored_stop_visit_parse_errors_filename = get_monitored_stop_visit_parse_errors_filename(snapshot_id)
+                    if os.path.exists(monitored_stop_visit_parse_errors_filename):
+                        os.unlink(monitored_stop_visit_parse_errors_filename)
+                    else:
+                        os.makedirs(os.path.dirname(monitored_stop_visit_parse_errors_filename), exist_ok=True)
                 error, monitored_stop_visit, is_new_snapshot = None, None, None
                 num_failed_parse_vehicle_locations = 0
                 stats = objects_maker.stats = defaultdict(int)
@@ -338,7 +390,7 @@ def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_dat
                     num_failed_parse_vehicle_locations = 0
                     with logs.debug_time('parse_monitored_stop_visits', snapshot_id=snapshot_id):
                         for monitored_stop_visit in iterate_monitored_stop_visits(snapshot_data):
-                            parsed_monitored_stop_visit = parse_monitored_stop_visit(monitored_stop_visit, snapshot_id)
+                            parsed_monitored_stop_visit = parse_monitored_stop_visit(monitored_stop_visit, snapshot_id, save_parse_errors=save_parse_errors)
                             if parsed_monitored_stop_visit:
                                 parsed_monitored_stop_visits.append(parsed_monitored_stop_visit)
                             else:
@@ -424,7 +476,8 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
         except:
             snapshot_data = None
         if snapshot_data:
-            process_snapshot(session=session, snapshot_id=snapshot_id, snapshot_data=snapshot_data, objects_maker=objects_maker)
+            process_snapshot(session=session, snapshot_id=snapshot_id, snapshot_data=snapshot_data,
+                             objects_maker=objects_maker, save_parse_errors=True)
             stats['processed'] += 1
         cur_datetime = cur_datetime + datetime.timedelta(minutes=1)
     if config.DEBUG:
