@@ -65,10 +65,12 @@ class ObjectsMaker:
             return int(pmsv['stop_point_ref'])
         elif objname == 'siri_ride':
             siri_route = self.get_cache_value('siri_route', pmsv)
+            assert siri_route.id
             return '{}-{}-{}'.format(siri_route.id, pmsv['journey_ref'], pmsv['vehicle_ref'])
         elif objname == 'siri_ride_stop':
             siri_ride = self.get_cache_value('siri_ride', pmsv)
             siri_stop = self.get_cache_value('siri_stop', pmsv)
+            assert siri_ride.id and siri_stop.id
             return '{}-{}-{}'.format(siri_ride.id, siri_stop.id, pmsv['order'])
         else:
             raise Exception('unknown objname: {}'.format(objname))
