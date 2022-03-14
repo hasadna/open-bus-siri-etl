@@ -5,6 +5,7 @@ import click
 import open_bus_siri_etl.process_snapshot
 import open_bus_siri_etl.validate_snapshots
 from open_bus_siri_etl import local_development_helpers
+import open_bus_siri_etl.parallel_process_old_missing_snapshots
 
 
 @click.group(context_settings={'max_content_width': 200})
@@ -39,14 +40,24 @@ def process_snapshot(**kwargs):
 @click.argument('SNAPSHOT_ID_TO')
 @click.option('--force-reload', is_flag=True)
 @click.option('--download', is_flag=True)
+@click.option('--only-missing', is_flag=True)
 def process_snapshots(**kwargs):
     open_bus_siri_etl.process_snapshot.process_snapshots(**kwargs)
 
 
 @main.command()
+@click.option('--processes', default=4)
+@click.option('--batch-minutes', default=60)
+@click.option('--max-history-minutes', default=60*24*365)
+def parallel_process_old_missing_snapshots(**kwargs):
+    open_bus_siri_etl.parallel_process_old_missing_snapshots.main(**kwargs)
+
+
+@main.command()
 @click.option('--limit')
-def process_new_snapshots(limit):
-    open_bus_siri_etl.process_snapshot.process_new_snapshots(limit)
+@click.option('--download', is_flag=True)
+def process_new_snapshots(**kwargs):
+    open_bus_siri_etl.process_snapshot.process_new_snapshots(**kwargs)
 
 
 @main.command()

@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import time
+import random
 import tempfile
 import datetime
 import traceback
@@ -10,6 +11,7 @@ from collections import defaultdict
 
 import requests
 import sqlalchemy
+import psycopg2.errors
 
 from open_bus_stride_db.db import session_decorator, get_session
 from open_bus_stride_db.model import (
@@ -21,6 +23,9 @@ from .graceful_killer import GracefulKiller
 from . import config
 from . import logs
 from . import common
+
+
+DEFAULT_SNAPSHOTS_TIMEDELTA = dict(minutes=10)
 
 
 def iterate_monitored_stop_visits(snapshot_data):
@@ -197,13 +202,24 @@ class ObjectsMaker:
                 self.stats['num_added_siri_ride_stops'] += 1
             heartbeat()
 
-    def get_or_create_objects(self, session, parsed_monitored_stop_visits, heartbeat):
-        self.get_or_create_siri_routes_stops(session, parsed_monitored_stop_visits, heartbeat)
-        session.commit()
-        self.get_or_create_siri_rides(session, parsed_monitored_stop_visits, heartbeat)
-        session.commit()
-        self.get_or_create_siri_ride_stops(session, parsed_monitored_stop_visits, heartbeat)
-        session.commit()
+    def get_or_create_objects(self, session, parsed_monitored_stop_visits, heartbeat, retry_num=1):
+        try:
+            self.get_or_create_siri_routes_stops(session, parsed_monitored_stop_visits, heartbeat)
+            session.commit()
+            self.get_or_create_siri_rides(session, parsed_monitored_stop_visits, heartbeat)
+            session.commit()
+            self.get_or_create_siri_ride_stops(session, parsed_monitored_stop_visits, heartbeat)
+            session.commit()
+        except Exception as e:
+            if hasattr(e, 'orig') and e.orig.__class__.__name__ == 'UniqueViolation':
+                if retry_num > 5:
+                    raise
+                else:
+                    print(f"Encountered UniqueViolation exception, will retry.. ({retry_num}/5)")
+                    time.sleep(random.randint(0, 5) + random.random())
+                    self.get_or_create_objects(session, parsed_monitored_stop_visits, heartbeat, retry_num=retry_num+1)
+            else:
+                raise
 
 
 def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id=None, save_parse_errors=False):
@@ -329,7 +345,8 @@ def download_snapshot_data(snapshot_id):
                 res.raise_for_status()
                 f.write(res.content)
             except:
-                print("Failed to download {}".format(url))
+                if config.DEBUG:
+                    print("Failed to download {}".format(url))
                 return None
         ret, out = subprocess.getstatusoutput('cat {} | brotli -d'.format(filepath))
         assert ret == 0, out
@@ -343,25 +360,37 @@ def get_snapshot_data(snapshot_id, download=False):
         return open_bus_siri_requester.storage.read(snapshot_id)
 
 
-def process_snapshots(snapshot_id_from, snapshot_id_to, force_reload=False, download=False):
-    dt = datetime.datetime.strptime(snapshot_id_from, '%Y/%m/%d/%H/%M')
+def process_snapshots(snapshot_id_from, snapshot_id_to, force_reload=False, download=False, only_missing=False):
+    dt_from = datetime.datetime.strptime(snapshot_id_from, '%Y/%m/%d/%H/%M')
     dt_to = datetime.datetime.strptime(snapshot_id_to, '%Y/%m/%d/%H/%M')
-    assert snapshot_id_from < snapshot_id_to
+    if dt_to > dt_from:
+        dt = dt_to
+        dt_to = dt_from
+    else:
+        dt = dt_from
+    print("Processing snapshots from {} to {}".format(dt, dt_to))
     stats = defaultdict(int)
     with get_session() as session:
         objects_maker = ObjectsMaker()
-        while dt <= dt_to:
+        while dt >= dt_to:
             snapshot_id = dt.strftime('%Y/%m/%d/%H/%M')
-            snapshot_data = get_snapshot_data(snapshot_id, download=download)
-            if snapshot_data:
-                process_snapshot(snapshot_id, force_reload=force_reload, download=download,
-                                 objects_maker=objects_maker, snapshot_data=snapshot_data,
-                                 session=session)
-                stats['processed snapshots'] += 1
+            siri_snapshot = session.query(SiriSnapshot).filter(SiriSnapshot.snapshot_id==snapshot_id).one_or_none()
+            if not only_missing or not siri_snapshot or (force_reload and siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.error):
+                snapshot_data = get_snapshot_data(snapshot_id, download=download)
+                if snapshot_data:
+                    process_snapshot(snapshot_id, force_reload=force_reload, download=download,
+                                     objects_maker=objects_maker, snapshot_data=snapshot_data,
+                                     session=session)
+                    stats['processed snapshots'] += 1
+                else:
+                    print("Missing snapshot data: {}".format(snapshot_id))
+                    stats['missing snapshots'] += 1
             else:
-                stats['missing snapshots'] += 1
-            dt = dt + datetime.timedelta(minutes=1)
+                print("Existing snapshot, will not reprocess: {}".format(snapshot_id))
+                stats['existing snapshots'] += 1
+            dt = dt - datetime.timedelta(minutes=1)
     print(dict(stats))
+    return stats
 
 
 def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_data=None,
@@ -452,11 +481,12 @@ def process_snapshot(snapshot_id, session=None, force_reload=False, snapshot_dat
 
 
 @session_decorator
-def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, now=None, graceful_killer=None):
+def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, now=None, graceful_killer=None,
+                          download=False):
     if limit:
         limit = int(limit)
     if not last_snapshots_timedelta:
-        last_snapshots_timedelta = dict(minutes=10)
+        last_snapshots_timedelta = DEFAULT_SNAPSHOTS_TIMEDELTA
     if not now:
         now = datetime.datetime.now(datetime.timezone.utc)
     last_loaded_snapshot = session.query(SiriSnapshot)\
@@ -479,13 +509,16 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
             break
         stats['attempted'] += 1
         snapshot_id = cur_datetime.strftime('%Y/%m/%d/%H/%M')
-        try:
-            snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
-        except:
-            snapshot_data = None
+        if download:
+            snapshot_data = download_snapshot_data(snapshot_id)
+        else:
+            try:
+                snapshot_data = open_bus_siri_requester.storage.read(snapshot_id)
+            except:
+                snapshot_data = None
         if snapshot_data:
             process_snapshot(session=session, snapshot_id=snapshot_id, snapshot_data=snapshot_data,
-                             objects_maker=objects_maker, save_parse_errors=True)
+                             objects_maker=objects_maker, save_parse_errors=True, download=download)
             stats['processed'] += 1
         cur_datetime = cur_datetime + datetime.timedelta(minutes=1)
     if config.DEBUG:

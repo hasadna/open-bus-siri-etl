@@ -23,8 +23,9 @@
     {
         "snapshot_id_from": "2021/07/05/12/50",
         "snapshot_id_to": "2021/07/05/12/55",
-        "force_reload": true,
-        "download": true
+        "force_reload": false,
+        "download": false,
+        "only_missing": false
     }
   tasks:
     - id: process-snapshots
@@ -35,8 +36,28 @@
         kwargs:
           snapshot_id_from: {}
           snapshot_id_to: {}
-          force_reload: {default: true}
-          download: {default: true}
+          force_reload: {default: false}
+          download: {default: false}
+          only_missing: {default: false}
+
+- name: siri-etl-parallel-process-old-missing-snapshots
+  description: |
+    Parallel process old missing snapshots.
+    {
+        "processes": 4,
+        "batch_minutes": 60,
+        "max_history_minutes": 525600
+    }
+  tasks:
+    - id: parallel-process-old-missing-snapshots
+      config:
+        type: api
+        module: open_bus_siri_etl.parallel_process_old_missing_snapshots
+        function: main
+        kwargs:
+          processes: {}
+          batch_minutes: {}
+          max_history_minutes: {}
 
 - name: siri-etl-validate-snapshots
   description: |
