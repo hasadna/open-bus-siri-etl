@@ -456,7 +456,7 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
     if limit:
         limit = int(limit)
     if not last_snapshots_timedelta:
-        last_snapshots_timedelta = dict(days=5)
+        last_snapshots_timedelta = dict(minutes=10)
     if not now:
         now = datetime.datetime.now(datetime.timezone.utc)
     last_loaded_snapshot = session.query(SiriSnapshot)\
@@ -466,6 +466,9 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
     if last_loaded_snapshot:
         print('last loaded snapshot_id: {}'.format(last_loaded_snapshot.snapshot_id))
         cur_datetime = datetime.datetime.strptime(last_loaded_snapshot.snapshot_id + 'z+0000', '%Y/%m/%d/%H/%Mz%z') + datetime.timedelta(minutes=1)
+        if cur_datetime < now - datetime.timedelta(**last_snapshots_timedelta):
+            print("Last loaded snapshot is too old, getting snapshots from last {}".format(last_snapshots_timedelta))
+            cur_datetime = now - datetime.timedelta(**last_snapshots_timedelta)
     else:
         print('no last loaded snapshot, getting snapshots from last {}'.format(last_snapshots_timedelta))
         cur_datetime = now - datetime.timedelta(**last_snapshots_timedelta)
