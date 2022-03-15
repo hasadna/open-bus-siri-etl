@@ -11,7 +11,6 @@ from collections import defaultdict
 
 import requests
 import sqlalchemy
-import psycopg2.errors
 
 from open_bus_stride_db.db import session_decorator, get_session
 from open_bus_stride_db.model import (
@@ -202,24 +201,13 @@ class ObjectsMaker:
                 self.stats['num_added_siri_ride_stops'] += 1
             heartbeat()
 
-    def get_or_create_objects(self, session, parsed_monitored_stop_visits, heartbeat, retry_num=1):
-        try:
-            self.get_or_create_siri_routes_stops(session, parsed_monitored_stop_visits, heartbeat)
-            session.commit()
-            self.get_or_create_siri_rides(session, parsed_monitored_stop_visits, heartbeat)
-            session.commit()
-            self.get_or_create_siri_ride_stops(session, parsed_monitored_stop_visits, heartbeat)
-            session.commit()
-        except Exception as e:
-            if hasattr(e, 'orig') and e.orig.__class__.__name__ == 'UniqueViolation':
-                if retry_num > 5:
-                    raise
-                else:
-                    print(f"Encountered UniqueViolation exception, will retry.. ({retry_num}/5)")
-                    time.sleep(random.randint(0, 5) + random.random())
-                    self.get_or_create_objects(session, parsed_monitored_stop_visits, heartbeat, retry_num=retry_num+1)
-            else:
-                raise
+    def get_or_create_objects(self, session, parsed_monitored_stop_visits, heartbeat):
+        self.get_or_create_siri_routes_stops(session, parsed_monitored_stop_visits, heartbeat)
+        session.commit()
+        self.get_or_create_siri_rides(session, parsed_monitored_stop_visits, heartbeat)
+        session.commit()
+        self.get_or_create_siri_ride_stops(session, parsed_monitored_stop_visits, heartbeat)
+        session.commit()
 
 
 def parse_monitored_stop_visit(monitored_stop_visit, snapshot_id=None, save_parse_errors=False):
@@ -360,7 +348,8 @@ def get_snapshot_data(snapshot_id, download=False):
         return open_bus_siri_requester.storage.read(snapshot_id)
 
 
-def process_snapshots(snapshot_id_from, snapshot_id_to, force_reload=False, download=False, only_missing=False):
+def process_snapshots(snapshot_id_from, snapshot_id_to, force_reload=False, download=False, only_missing=False,
+                      retry_exceptions=5):
     dt_from = datetime.datetime.strptime(snapshot_id_from, '%Y/%m/%d/%H/%M')
     dt_to = datetime.datetime.strptime(snapshot_id_to, '%Y/%m/%d/%H/%M')
     if dt_to > dt_from:
@@ -371,16 +360,28 @@ def process_snapshots(snapshot_id_from, snapshot_id_to, force_reload=False, down
     print("Processing snapshots from {} to {}".format(dt, dt_to))
     stats = defaultdict(int)
     with get_session() as session:
-        objects_maker = ObjectsMaker()
         while dt >= dt_to:
             snapshot_id = dt.strftime('%Y/%m/%d/%H/%M')
             siri_snapshot = session.query(SiriSnapshot).filter(SiriSnapshot.snapshot_id==snapshot_id).one_or_none()
             if not only_missing or not siri_snapshot or (force_reload and siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.error):
                 snapshot_data = get_snapshot_data(snapshot_id, download=download)
                 if snapshot_data:
-                    process_snapshot(snapshot_id, force_reload=force_reload, download=download,
-                                     objects_maker=objects_maker, snapshot_data=snapshot_data,
-                                     session=session)
+                    retry_num = 0
+                    while True:
+                        retry_num += 1
+                        try:
+                            process_snapshot(snapshot_id, force_reload=force_reload, download=download,
+                                             snapshot_data=snapshot_data)
+                            if retry_num > 1:
+                                print("{}: success on retry_num {}".format(snapshot_id, retry_num))
+                            break
+                        except Exception:
+                            if retry_num >= retry_exceptions:
+                                raise
+                            else:
+                                traceback.print_exc()
+                                print("{}: exception, will retry ({}/{})".format(snapshot_id, retry_num, retry_exceptions))
+                                time.sleep(random.randint(3, 6) + random.random())
                     stats['processed snapshots'] += 1
                 else:
                     print("Missing snapshot data: {}".format(snapshot_id))
