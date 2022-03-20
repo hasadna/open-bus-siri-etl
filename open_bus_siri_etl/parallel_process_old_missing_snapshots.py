@@ -10,7 +10,7 @@ def worker(input, output):
         try:
             stats = process_snapshot.process_snapshots(
                 snapshot_id_from, snapshot_id_to,
-                force_reload=False, download=True, only_missing=True
+                force_reload=True, download=True, only_missing=True
             )
             result = {
                 'snapshot_id_from': snapshot_id_from,
