@@ -46,7 +46,8 @@
     {
         "processes": 4,
         "batch_minutes": 60,
-        "max_history_minutes": 525600
+        "from_date": "2022-03-19",
+        "to_date": "2022-03-15"
     }
   tasks:
     - id: parallel-process-old-missing-snapshots
@@ -57,7 +58,8 @@
         kwargs:
           processes: {}
           batch_minutes: {}
-          max_history_minutes: {}
+          from_date: {}
+          to_date: {}
 
 - name: siri-etl-validate-snapshots
   description: |

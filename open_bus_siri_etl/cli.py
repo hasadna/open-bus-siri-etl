@@ -46,9 +46,10 @@ def process_snapshots(**kwargs):
 
 
 @main.command()
+@click.argument('FROM_DATE')
+@click.argument('TO_DATE')
 @click.option('--processes', default=4)
 @click.option('--batch-minutes', default=60)
-@click.option('--max-history-minutes', default=60*24*365)
 def parallel_process_old_missing_snapshots(**kwargs):
     open_bus_siri_etl.parallel_process_old_missing_snapshots.main(**kwargs)
 

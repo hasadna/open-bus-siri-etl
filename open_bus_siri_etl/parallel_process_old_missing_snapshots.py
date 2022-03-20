@@ -2,7 +2,7 @@ import datetime
 import multiprocessing
 from collections import defaultdict
 
-from . import process_snapshot
+from . import process_snapshot, common
 
 
 def worker(input, output):
@@ -26,19 +26,27 @@ def worker(input, output):
         output.put(result)
 
 
-def main(processes=4, batch_minutes=60, max_history_minutes=60*24*365):
+def main(from_date, to_date, processes=4, batch_minutes=60):
     processes = int(processes)
     batch_minutes = int(batch_minutes)
-    max_history_minutes = int(max_history_minutes)
-    dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(**process_snapshot.DEFAULT_SNAPSHOTS_TIMEDELTA) + datetime.timedelta(minutes=3)
-    print("Starting {} processes to process old missing snapshots from {}".format(processes, dt))
+    from_date = common.parse_date_str(from_date)
+    to_date = common.parse_date_str(to_date)
+    if to_date > from_date:
+        dt = to_date
+        min_dt = from_date
+    else:
+        dt = from_date
+        min_dt = to_date
+    dt = datetime.datetime.combine(dt, datetime.time(23, 59))
+    min_dt = datetime.datetime.combine(min_dt, datetime.time(0, 0))
+    print("Starting {} processes to process old missing snapshots from {} to {}".format(processes, dt, min_dt))
     task_queue = multiprocessing.Queue()
     done_queue = multiprocessing.Queue()
     num_tasks = 0
-    while dt > datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=max_history_minutes):
+    while dt >= min_dt:
         snapshot_id_from = dt.strftime('%Y/%m/%d/%H/%M')
         dt = dt - datetime.timedelta(minutes=batch_minutes)
-        snapshot_id_to = dt.strftime('%Y/%m/%d/%H/%M')
+        snapshot_id_to = (min_dt if dt < min_dt else dt).strftime('%Y/%m/%d/%H/%M')
         task_queue.put((snapshot_id_from, snapshot_id_to))
         num_tasks += 1
     print("{} tasks in queue, starting processing".format(num_tasks))
