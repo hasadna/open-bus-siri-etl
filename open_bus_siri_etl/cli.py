@@ -46,8 +46,8 @@ def process_snapshots(**kwargs):
 
 
 @main.command()
-@click.argument('FROM_DATE')
-@click.argument('TO_DATE')
+@click.argument('FROM_DATE', required=False)
+@click.argument('TO_DATE', required=False)
 @click.option('--processes', default=4)
 @click.option('--batch-minutes', default=60)
 def parallel_process_old_missing_snapshots(**kwargs):

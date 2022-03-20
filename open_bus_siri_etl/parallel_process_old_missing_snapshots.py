@@ -26,11 +26,11 @@ def worker(input, output):
         output.put(result)
 
 
-def main(from_date, to_date, processes=4, batch_minutes=60):
+def main(from_date=None, to_date=None, processes=4, batch_minutes=60):
     processes = int(processes)
     batch_minutes = int(batch_minutes)
     from_date = common.parse_date_str(from_date)
-    to_date = common.parse_date_str(to_date)
+    to_date = common.parse_date_str(to_date, num_days=5)
     if to_date > from_date:
         dt = to_date
         min_dt = from_date
