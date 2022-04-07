@@ -46,10 +46,10 @@ jobs:
             export GIT_SSH_COMMAND="ssh -i `pwd`/hasadna_k8s_deploy_key -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" &&\
             git clone git@github.com:hasadna/hasadna-k8s.git &&\
             cd hasadna-k8s &&\
-            python update_yaml.py '{"openbus":{"siriEtlImage":"'"${DOCKER_APP_IMAGE_NAME}:${GITHUB_SHA}"'"}}' ./values.auto-updated.yaml &&\
+            python update_yaml.py '{"siriEtlImage":"'"${DOCKER_APP_IMAGE_NAME}:${GITHUB_SHA}"'"}' apps/openbus/values-hasadna-auto-updated.yaml &&\
             git config --global user.name "Open Bus Siri ETL CI" &&\
             git config --global user.email "open-bus-siri-etl-ci@localhost" &&\
-            git add ./values.auto-updated.yaml && git commit -m "automatic update of open bus siri etl" &&\
+            git add apps/openbus/values-hasadna-auto-updated.yaml && git commit -m "automatic update of open bus siri etl" &&\
             git push origin master &&\
             echo "${OPEN_BUS_PIPELINES_DEPLOY_KEY}" > open_bus_pipelines_deploy_key &&\
             chmod 400 open_bus_pipelines_deploy_key &&\
