@@ -6,6 +6,8 @@
         "force_reload": true,
         "download": true
     }
+  docs:
+    hide: true
   tasks:
     - id: process-snapshot
       config:
@@ -27,6 +29,8 @@
         "download": false,
         "only_missing": false
     }
+  docs:
+    hide: true
   tasks:
     - id: process-snapshots
       config:
@@ -49,6 +53,8 @@
         "from_date": "2022-03-19",
         "to_date": "2022-03-15"
     }
+  docs:
+    hide: true
   tasks:
     - id: parallel-process-old-missing-snapshots
       config:
@@ -68,6 +74,8 @@
         "snapshot_id_from": "2021/07/05/12/50",
         "snapshot_id_to": "2021/07/05/12/55"
     }
+  docs:
+    hide: true
   tasks:
     - id: validate-snapshots
       config:
