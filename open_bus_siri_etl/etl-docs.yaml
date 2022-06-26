@@ -1,0 +1,5 @@
+- name: siri-etl-process-snapshot-new-snapshots-daemon
+  desc: |
+    A daemon which runs continuously and approximately every 60 seconds looks for new SIRI snapshots loaded by [[siri-requester-daemon]].
+    It then loads all the data from the downloaded SIRI snapshots to the DB tables [[siri_ride]], [[siri_ride_stop]], [[siri_route]], 
+    [[siri_stop]], [[siri_vehicle_location]]. It uses the [[siri_snapshot]] table to track progress of each snapshot loading.
