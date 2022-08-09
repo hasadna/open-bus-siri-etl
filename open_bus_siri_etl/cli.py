@@ -74,9 +74,9 @@ def validate_snapshots(**kwargs):
 
 
 @main.command()
-def update_pending_snapshots(**kwargs):
+def update_pending_snapshots():
     from .update_pending_snapshots import main
-    main(**kwargs)
+    main(with_remote_snapshots=True, verbose=True)
 
 
 if __name__ == '__main__':

@@ -88,8 +88,8 @@
 
 - name: siri-etl-update-pending-snapshots
   description: |
-    Check all snapshots in the local SIRI storage, snapshots which don't exist in DB siri_snapshots
-    table are added with status pending.
+    Check all raw snapshot files in both local and remote (S3) storage,
+    snapshots which don't exist in DB siri_snapshots table are added with status pending.
   docs:
     hide: true
   tasks:
@@ -98,3 +98,6 @@
         type: api
         module: open_bus_siri_etl.update_pending_snapshots
         function: main
+        kwargs:
+          with_remote_snapshots: {default: true}
+          verbose: {default: true}
