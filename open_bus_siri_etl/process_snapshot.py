@@ -22,6 +22,7 @@ from .graceful_killer import GracefulKiller
 from . import config
 from . import logs
 from . import common
+from . import update_pending_snapshots
 
 
 DEFAULT_SNAPSHOTS_TIMEDELTA = dict(minutes=10)
@@ -490,6 +491,7 @@ def process_new_snapshots(session, limit=None, last_snapshots_timedelta=None, no
         last_snapshots_timedelta = DEFAULT_SNAPSHOTS_TIMEDELTA
     if not now:
         now = datetime.datetime.now(datetime.timezone.utc)
+    update_pending_snapshots.main(session)
     last_loaded_snapshot = session.query(SiriSnapshot)\
         .filter(SiriSnapshot.etl_status == SiriSnapshotEtlStatusEnum.loaded)\
         .order_by(sqlalchemy.desc(SiriSnapshot.snapshot_id))\
