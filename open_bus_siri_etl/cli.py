@@ -73,5 +73,11 @@ def validate_snapshots(**kwargs):
     open_bus_siri_etl.validate_snapshots.main(**kwargs)
 
 
+@main.command()
+def update_pending_snapshots(**kwargs):
+    from .update_pending_snapshots import main
+    main(**kwargs)
+
+
 if __name__ == '__main__':
     main()

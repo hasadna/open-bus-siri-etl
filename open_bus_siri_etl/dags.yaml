@@ -85,3 +85,16 @@
         kwargs:
           snapshot_id_from: {}
           snapshot_id_to: {}
+
+- name: siri-etl-update-pending-snapshots
+  description: |
+    Check all snapshots in the local SIRI storage, snapshots which don't exist in DB siri_snapshots
+    table are added with status pending.
+  docs:
+    hide: true
+  tasks:
+    - id: update-pending-snapshots
+      config:
+        type: api
+        module: open_bus_siri_etl.update_pending_snapshots
+        function: main
