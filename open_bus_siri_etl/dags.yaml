@@ -87,11 +87,10 @@
           snapshot_id_to: {}
 
 - name: siri-etl-update-pending-snapshots
+  schedule_interval: "@daily"
   description: |
     Check all raw snapshot files in both local and remote (S3) storage,
     snapshots which don't exist in DB siri_snapshots table are added with status pending.
-  docs:
-    hide: true
   tasks:
     - id: update-pending-snapshots
       config:
