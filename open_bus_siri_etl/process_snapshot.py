@@ -364,7 +364,7 @@ def process_snapshots(snapshot_id_from, snapshot_id_to, force_reload=False, down
         while dt >= dt_to:
             snapshot_id = dt.strftime('%Y/%m/%d/%H/%M')
             siri_snapshot = session.query(SiriSnapshot).filter(SiriSnapshot.snapshot_id==snapshot_id).one_or_none()
-            if not only_missing or not siri_snapshot or (force_reload and siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.error):
+            if not only_missing or not siri_snapshot or (force_reload and siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.error) or siri_snapshot.etl_status == SiriSnapshotEtlStatusEnum.pending:
                 snapshot_data = get_snapshot_data(snapshot_id, download=download)
                 if snapshot_data:
                     retry_num = 0
