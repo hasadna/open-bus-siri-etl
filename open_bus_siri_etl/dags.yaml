@@ -44,38 +44,14 @@
           download: {default: false}
           only_missing: {default: false}
 
-- name: siri-etl-parallel-process-old-missing-snapshots
-  description: |
-    Parallel process old missing snapshots.
-    {
-        "processes": 4,
-        "batch_minutes": 60,
-        "from_date": "2022-03-19",
-        "to_date": "2022-03-15"
-    }
-  docs:
-    hide: true
-  tasks:
-    - id: parallel-process-old-missing-snapshots
-      config:
-        type: api
-        module: open_bus_siri_etl.parallel_process_old_missing_snapshots
-        function: main
-        kwargs:
-          processes: {}
-          batch_minutes: {}
-          from_date: {}
-          to_date: {}
-
 - name: siri-etl-validate-snapshots
   description: |
-    Validate a range of snapshots and generate a report with validation errors.
+    Runs manually, compare snapshots in range between the data in DB and the raw snapshot data.
+    Generates a csv file where each row contains a mismatch between the DB and raw snapshot data.
     {
         "snapshot_id_from": "2021/07/05/12/50",
         "snapshot_id_to": "2021/07/05/12/55"
     }
-  docs:
-    hide: true
   tasks:
     - id: validate-snapshots
       config:
@@ -89,7 +65,7 @@
 - name: siri-etl-update-pending-snapshots
   schedule_interval: "@daily"
   description: |
-    Check all raw snapshot files in both local and remote (S3) storage,
+    Runs daily, checks all raw snapshot files in both local and remote (S3) storage,
     snapshots which don't exist in DB siri_snapshots table are added with status pending.
   tasks:
     - id: update-pending-snapshots
@@ -100,3 +76,15 @@
         kwargs:
           with_remote_snapshots: {default: true}
           verbose: {default: true}
+
+- name: siri-etl-process-old-missing-snapshots
+  schedule_interval: "@daily"
+  description: |
+    Runs daily, iterates over siri_snapshots which have status pending and older then 24 hours,
+    runs processing for those snapshots to update their data in DB.
+  tasks:
+    - id: process-old-missing-snapshots
+      config:
+        type: api
+        module: open_bus_siri_etl.parallel_process_old_missing_snapshots
+        function: main
