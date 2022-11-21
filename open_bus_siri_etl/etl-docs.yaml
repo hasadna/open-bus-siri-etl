@@ -3,3 +3,8 @@
     A daemon which runs continuously and approximately every 60 seconds looks for new SIRI snapshots loaded by [[siri-requester-daemon]].
     It then loads all the data from the downloaded SIRI snapshots to the DB tables [[siri_ride]], [[siri_ride_stop]], [[siri_route]], 
     [[siri_stop]], [[siri_vehicle_location]]. It uses the [[siri_snapshot]] table to track progress of each snapshot loading.
+
+    Most of the processing is done in [process_snapshot.py](https://github.com/hasadna/open-bus-siri-etl/blob/main/open_bus_siri_etl/process_snapshot.py)
+    process_snapshot function. This functions gets the SIRI snapshot data, parses it and loads to DB tables.
+    The full spec of the SIRI snapshot data is available [here](https://www.gov.il/he/departments/general/real_time_information_siri)
+    as a PDF file under "SIRI-SM / ICD SM".
