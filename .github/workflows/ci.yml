@@ -12,7 +12,7 @@ jobs:
         HASADNA_K8S_DEPLOY_KEY: ${{ secrets.HASADNA_K8S_DEPLOY_KEY }}
         OPEN_BUS_PIPELINES_DEPLOY_KEY: ${{ secrets.OPEN_BUS_PIPELINES_DEPLOY_KEY }}
       run: |
-        python3 -m pip install ruamel.yaml &&\
+        python3 -m pip install ruamel.yaml.clib==0.2.6 ruamel.yaml==0.17.21 &&\
         bin/validate_airflow_yaml.py airflow.yaml &&\
         OPEN_BUS_SIRI_ETL_ROOTDIR="$(pwd)" &&\
         echo "${GITHUB_TOKEN}" | docker login docker.pkg.github.com -u hasadna --password-stdin &&\
