@@ -119,15 +119,17 @@ class ObjectsMaker:
             if not self.is_cache_value_exists('siri_stop', pmsv):
                 siri_stop_fetch_keys.add(int(pmsv['stop_point_ref']))
         heartbeat()
-        for siri_route in session.query(SiriRoute).filter(
-                sqlalchemy.tuple_(SiriRoute.operator_ref, SiriRoute.line_ref).in_(siri_route_fetch_keys)
-        ):
-            self.siri_routes_cache['{}-{}'.format(siri_route.operator_ref, siri_route.line_ref)] = siri_route
-            heartbeat()
-        for siri_stop in session.query(SiriStop).filter(
-                SiriStop.code.in_(siri_stop_fetch_keys)
-        ):
-            self.siri_stops_cache[siri_stop.code] = siri_stop
+        for siri_route_fetch_keys_batch in common.chunked(siri_route_fetch_keys):
+            for siri_route in session.query(SiriRoute).filter(
+                    sqlalchemy.tuple_(SiriRoute.operator_ref, SiriRoute.line_ref).in_(siri_route_fetch_keys_batch)
+            ):
+                self.siri_routes_cache['{}-{}'.format(siri_route.operator_ref, siri_route.line_ref)] = siri_route
+                heartbeat()
+        for siri_stop_fetch_keys_batch in common.chunked(siri_stop_fetch_keys):
+            for siri_stop in session.query(SiriStop).filter(
+                    SiriStop.code.in_(siri_stop_fetch_keys_batch)
+            ):
+                self.siri_stops_cache[siri_stop.code] = siri_stop
         heartbeat()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_route', pmsv):
@@ -150,15 +152,16 @@ class ObjectsMaker:
                 assert siri_route.id
                 siri_ride_fetch_keys.add((siri_route.id, pmsv['journey_ref'], pmsv['vehicle_ref']))
         heartbeat()
-        for siri_ride in session.query(SiriRide).filter(
-                sqlalchemy.tuple_(SiriRide.siri_route_id, SiriRide.journey_ref, SiriRide.vehicle_ref).in_(siri_ride_fetch_keys)
-        ):
-            self.siri_rides_cache['{}-{}-{}'.format(
-                siri_ride.siri_route_id,
-                siri_ride.journey_ref,
-                siri_ride.vehicle_ref
-            )] = siri_ride
-            heartbeat()
+        for siri_ride_fetch_keys_batch in common.chunked(siri_ride_fetch_keys):
+            for siri_ride in session.query(SiriRide).filter(
+                    sqlalchemy.tuple_(SiriRide.siri_route_id, SiriRide.journey_ref, SiriRide.vehicle_ref).in_(siri_ride_fetch_keys_batch)
+            ):
+                self.siri_rides_cache['{}-{}-{}'.format(
+                    siri_ride.siri_route_id,
+                    siri_ride.journey_ref,
+                    siri_ride.vehicle_ref
+                )] = siri_ride
+                heartbeat()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_ride', pmsv):
                 siri_ride = SiriRide(
@@ -181,15 +184,16 @@ class ObjectsMaker:
                 assert siri_ride.id and siri_stop.id
                 siri_ride_stop_fetch_keys.add((siri_ride.id, siri_stop.id, int(pmsv['order'])))
         heartbeat()
-        for siri_ride_stop in session.query(SiriRideStop).filter(
-                sqlalchemy.tuple_(
-                    SiriRideStop.siri_ride_id, SiriRideStop.siri_stop_id, SiriRideStop.order
-                ).in_(siri_ride_stop_fetch_keys)
-        ):
-            self.siri_ride_stops_cache['{}-{}-{}'.format(
-                siri_ride_stop.siri_ride_id, siri_ride_stop.siri_stop_id, siri_ride_stop.order
-            )] = siri_ride_stop
-            heartbeat()
+        for siri_ride_stop_fetch_keys_batch in common.chunked(siri_ride_stop_fetch_keys):
+            for siri_ride_stop in session.query(SiriRideStop).filter(
+                    sqlalchemy.tuple_(
+                        SiriRideStop.siri_ride_id, SiriRideStop.siri_stop_id, SiriRideStop.order
+                    ).in_(siri_ride_stop_fetch_keys_batch)
+            ):
+                self.siri_ride_stops_cache['{}-{}-{}'.format(
+                    siri_ride_stop.siri_ride_id, siri_ride_stop.siri_stop_id, siri_ride_stop.order
+                )] = siri_ride_stop
+                heartbeat()
         for pmsv in parsed_monitored_stop_visits:
             if not self.is_cache_value_exists('siri_ride_stop', pmsv):
                 siri_ride_stop = SiriRideStop(

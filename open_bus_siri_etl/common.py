@@ -1,6 +1,18 @@
 import datetime
 
 
+def chunked(iterable, size=500):
+    """Yields successive chunks of at most `size` items from iterable.
+
+    Used to keep composite `tuple_(...).in_(...)` queries small enough that
+    Postgres doesn't hit its parser stack depth limit (StatementTooComplex)
+    on snapshots with many thousands of distinct routes/rides/ride-stops.
+    """
+    iterable = list(iterable)
+    for i in range(0, len(iterable), size):
+        yield iterable[i:i + size]
+
+
 def now():
     return datetime.datetime.now(datetime.timezone.utc)
 
